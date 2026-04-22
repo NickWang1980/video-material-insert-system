@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <el-table :data="items" stripe style="width: 100%">
     <el-table-column prop="id" label="ID" width="80" />
     <el-table-column prop="task_name" label="任务名称" min-width="180" />
@@ -20,19 +20,17 @@
         <span class="text-sm text-gray-700">{{ formatElapsed(row) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="560">
+    <el-table-column label="操作" width="620">
       <template #default="{ row }">
         <div class="flex flex-wrap items-center gap-2">
           <el-button size="small" @click="$emit('open', row.id)">详情</el-button>
-          <el-button size="small" :disabled="row.status === 'processing'" @click="$emit('retry', row.id)">重试</el-button>
-          <el-button
-            size="small"
-            type="warning"
-            :disabled="!canStop(row.status)"
-            @click="$emit('stop', row.id)"
-          >
+          <el-button size="small" :disabled="row.status === 'processing'" @click="$emit('retry', row.id)">
+            重试
+          </el-button>
+          <el-button size="small" type="warning" :disabled="!canStop(row.status)" @click="$emit('stop', row.id)">
             停止
           </el-button>
+          <el-button size="small" :disabled="!row.output_path" @click="onPlayOutput(row)">播放</el-button>
           <a
             :href="downloadOutputUrl(row.id)"
             target="_blank"
@@ -55,10 +53,29 @@
       </template>
     </el-table-column>
   </el-table>
+
+  <el-dialog
+    v-model="previewVisible"
+    :title="previewTask ? `预览：${previewTask.task_name}` : '预览'"
+    width="720px"
+    destroy-on-close
+  >
+    <div
+      v-if="previewTask"
+      class="bg-gray-50 rounded-lg p-4 flex items-center justify-center min-h-[320px]"
+    >
+      <video
+        :src="previewUrl"
+        class="max-h-[520px] max-w-full"
+        controls
+        preload="metadata"
+      ></video>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 
 import StatusTag from "../common/StatusTag.vue";
@@ -71,7 +88,14 @@ defineProps({
 defineEmits(["open", "retry", "remove", "stop"]);
 
 const nowMs = ref(Date.now());
+const previewVisible = ref(false);
+const previewTask = ref(null);
 let tickTimer = null;
+
+const previewUrl = computed(() => {
+  if (!previewTask.value) return "";
+  return downloadOutputUrl(previewTask.value.id);
+});
 
 onMounted(() => {
   tickTimer = setInterval(() => {
@@ -116,6 +140,15 @@ function linkClass(enabled) {
     return "text-sm text-gray-400 cursor-not-allowed";
   }
   return "text-sm underline";
+}
+
+function onPlayOutput(row) {
+  if (!row.output_path) {
+    ElMessage.warning("当前任务暂无成品文件");
+    return;
+  }
+  previewTask.value = row;
+  previewVisible.value = true;
 }
 
 function onDownloadOutput(row) {

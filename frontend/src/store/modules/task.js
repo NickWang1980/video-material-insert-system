@@ -28,6 +28,9 @@ export const useTaskStore = defineStore("task", {
     async create(payload) {
       return await taskApi.createTask(payload);
     },
+    async checkKeywordCollision(payload) {
+      return await taskApi.checkKeywordCollision(payload);
+    },
     async retry(id) {
       return await taskApi.retryTask(id);
     },

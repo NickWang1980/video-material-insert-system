@@ -17,6 +17,9 @@
       <el-table-column label="视频像素" width="150">
         <template #default="{ row }">{{ row.video_width }}×{{ row.video_height }}</template>
       </el-table-column>
+      <el-table-column label="总时长" width="120">
+        <template #default="{ row }">{{ formatDuration(row.video_duration_seconds) }}</template>
+      </el-table-column>
       <el-table-column label="音轨" min-width="220">
         <template #default="{ row }">
           <div class="flex items-center gap-2">
@@ -85,6 +88,13 @@
                 重试识别
               </el-button>
             </div>
+            <el-progress
+              :percentage="asrProgressValue(row)"
+              :status="asrProgressStatus(row)"
+              :stroke-width="14"
+              :show-text="true"
+              :class="asrProgressBarClass(row)"
+            />
             <div v-if="row.asr_error" class="text-xs text-red-500 truncate" :title="row.asr_error">
               失败原因：{{ row.asr_error }}
             </div>
@@ -283,6 +293,15 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const remain = total % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remain).padStart(2, "0")}`;
+}
+
 function startRefreshTimer() {
   if (refreshTimer.value) return;
   refreshTimer.value = setInterval(() => {
@@ -319,6 +338,29 @@ function asrRetryText(row) {
     return "";
   }
   return `重试 ${retryCount}/${retryMax}`;
+}
+
+function asrProgressValue(row) {
+  const status = row.asr_status || "pending";
+  const raw = Number(row.asr_progress ?? 0);
+  const safe = Number.isFinite(raw) ? raw : 0;
+
+  if (status === "completed" || hasAsrSrt(row)) return 100;
+  if (status === "failed") return Math.max(1, Math.min(100, safe || 100));
+  if (status === "running") return Math.max(1, Math.min(99, safe || 35));
+  return Math.max(1, Math.min(95, safe || 10));
+}
+
+function asrProgressStatus(row) {
+  const status = row.asr_status || "pending";
+  if (status === "completed" || hasAsrSrt(row)) return "success";
+  if (status === "failed") return "exception";
+  return "";
+}
+
+function asrProgressBarClass(row) {
+  const status = row.asr_status || "pending";
+  return status === "running" || status === "pending" ? "asr-progress-breathing" : "";
 }
 
 function hasWav(row) {
@@ -428,3 +470,25 @@ function normalizeParsedLines(payload) {
   }));
 }
 </script>
+
+<style scoped>
+:deep(.asr-progress-breathing .el-progress-bar__inner) {
+  animation: asr-breathing 1.8s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.4);
+}
+
+@keyframes asr-breathing {
+  0% {
+    opacity: 0.65;
+    filter: saturate(0.9);
+  }
+  50% {
+    opacity: 1;
+    filter: saturate(1.2);
+  }
+  100% {
+    opacity: 0.65;
+    filter: saturate(0.9);
+  }
+}
+</style>

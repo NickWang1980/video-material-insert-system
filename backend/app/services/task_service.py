@@ -6,7 +6,7 @@ import random
 import subprocess
 import threading
 import time
-from dataclasses import replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,6 +34,17 @@ _semaphore = threading.BoundedSemaphore(_concurrency)
 _task_control_lock = threading.Lock()
 _running_ffmpeg_processes: dict[int, subprocess.Popen] = {}
 _stop_requested_task_ids: set[int] = set()
+
+
+@dataclass(frozen=True)
+class KeywordCollisionWarning:
+    subtitle_index: int
+    start: str
+    end: str
+    text: str
+    matched_keywords: list[str]
+    winner_keyword: str
+    suppressed_keywords: list[str]
 
 
 class TemplateNotFoundError(Exception):
@@ -118,6 +129,122 @@ def merge_templates_and_validate_keywords(
     return merged_config, source_templates
 
 
+def _normalize_subtitle_source(subtitle_source: str | None) -> str:
+    value = (subtitle_source or "uploaded").strip().lower()
+    if value not in {"uploaded", "asr"}:
+        raise ValueError("subtitle_source 仅支持 uploaded 或 asr")
+    return value
+
+
+def resolve_source_subtitle_path(
+    *,
+    source_entry: SourceVideoEntry,
+    subtitle_source: str,
+) -> str:
+    subtitle_source_normalized = _normalize_subtitle_source(subtitle_source)
+    selected_subtitle_path = source_entry.subtitle_path
+
+    if subtitle_source_normalized == "uploaded":
+        if not source_entry.subtitle_path:
+            raise ValueError("当前源视频条目缺少上传SRT路径")
+        if not os.path.exists(source_entry.subtitle_path):
+            raise ValueError("当前源视频条目的上传SRT文件不存在")
+        return source_entry.subtitle_path
+
+    if source_entry.asr_srt_path and os.path.exists(source_entry.asr_srt_path):
+        return source_entry.asr_srt_path
+
+    asr_status = source_entry.asr_status or "pending"
+    if asr_status != "completed":
+        raise AsrSubtitleUnavailableError(
+            source_entry_id=source_entry.id,
+            reason=f"当前 ASR 状态为 {asr_status}",
+        )
+    if not source_entry.asr_srt_path:
+        raise AsrSubtitleUnavailableError(
+            source_entry_id=source_entry.id,
+            reason="ASR 字幕路径不存在",
+        )
+    raise AsrSubtitleUnavailableError(
+        source_entry_id=source_entry.id,
+        reason="ASR 字幕文件不存在",
+    )
+
+
+def detect_keyword_collision_warnings(
+    subtitles: list[dict[str, Any]],
+    merged_config: list[dict[str, Any]],
+) -> list[KeywordCollisionWarning]:
+    indexed_rules: list[tuple[int, str]] = []
+    for index, rule in enumerate(merged_config):
+        if not isinstance(rule, dict):
+            continue
+        keyword_raw = rule.get("关键字")
+        keyword = keyword_raw if isinstance(keyword_raw, str) else str(keyword_raw or "")
+        keyword = keyword.strip()
+        if keyword:
+            indexed_rules.append((index, keyword))
+
+    warnings: list[KeywordCollisionWarning] = []
+    for subtitle in subtitles:
+        text = str(subtitle.get("text", "") or "")
+        matched_rules: list[tuple[int, str]] = [
+            (rule_index, keyword)
+            for rule_index, keyword in indexed_rules
+            if keyword in text
+        ]
+        if len(matched_rules) <= 1:
+            continue
+
+        sorted_candidates = sorted(
+            matched_rules,
+            key=lambda item: (-len(item[1]), item[0]),
+        )
+        winner_keyword = sorted_candidates[0][1]
+        matched_keywords = [keyword for _, keyword in matched_rules]
+        suppressed_keywords = [keyword for _, keyword in sorted_candidates[1:]]
+        warnings.append(
+            KeywordCollisionWarning(
+                subtitle_index=int(subtitle.get("index", 0)),
+                start=str(subtitle.get("start", "")),
+                end=str(subtitle.get("end", "")),
+                text=text,
+                matched_keywords=matched_keywords,
+                winner_keyword=winner_keyword,
+                suppressed_keywords=suppressed_keywords,
+            )
+        )
+    return warnings
+
+
+def build_keyword_collision_warnings_for_task(
+    *,
+    db: Session,
+    source_entry_id: int,
+    config_ids: list[int],
+    subtitle_source: str,
+) -> list[KeywordCollisionWarning]:
+    merged_snapshot, _ = merge_templates_and_validate_keywords(db, config_ids)
+    source_entry = (
+        db.query(SourceVideoEntry).filter(SourceVideoEntry.id == source_entry_id).first()
+    )
+    if not source_entry:
+        raise SourceVideoEntryNotFoundError(source_entry_id)
+
+    subtitle_path = resolve_source_subtitle_path(
+        source_entry=source_entry,
+        subtitle_source=subtitle_source,
+    )
+    settings_row = ensure_settings_row(db)
+    encoding = "utf-8" if _normalize_subtitle_source(subtitle_source) == "asr" else settings_row.subtitle_encoding
+    subtitles = parse_srt(
+        subtitle_path,
+        encoding=encoding,
+        time_offset_seconds=float(settings_row.subtitle_time_offset_seconds),
+    )
+    return detect_keyword_collision_warnings(subtitles, merged_snapshot)
+
+
 def create_task(
     *,
     settings: Settings,
@@ -127,7 +254,8 @@ def create_task(
     config_ids: list[int],
     subtitle_source: str = "uploaded",
     add_subtitle_to_video: bool = False,
-) -> Task:
+    collision_priority: dict[int, list[str]] | None = None,
+) -> tuple[Task, list[KeywordCollisionWarning]]:
     merged_snapshot, source_templates = merge_templates_and_validate_keywords(db, config_ids)
     primary_config_id = source_templates[0]["id"] if source_templates else None
 
@@ -167,6 +295,19 @@ def create_task(
                 reason="ASR 字幕文件不存在",
             )
 
+    settings_row = ensure_settings_row(db)
+    subtitle_encoding = (
+        "utf-8"
+        if subtitle_source_normalized == "asr"
+        else settings_row.subtitle_encoding
+    )
+    subtitles = parse_srt(
+        selected_subtitle_path,
+        encoding=subtitle_encoding,
+        time_offset_seconds=float(settings_row.subtitle_time_offset_seconds),
+    )
+    keyword_collision_warnings = detect_keyword_collision_warnings(subtitles, merged_snapshot)
+
     task = Task(
         task_name=task_name,
         video_path=source_entry.video_path,
@@ -186,12 +327,19 @@ def create_task(
         task_id=task.id,
         config_json=json.dumps(merged_snapshot, ensure_ascii=False),
         source_templates_json=json.dumps(source_templates, ensure_ascii=False),
+        keyword_collision_warnings_json=json.dumps(
+            [asdict(item) for item in keyword_collision_warnings],
+            ensure_ascii=False,
+        ),
+        collision_priority_json=(
+            json.dumps(collision_priority, ensure_ascii=False) if collision_priority else None
+        ),
     )
     db.add(snapshot)
     db.commit()
 
     start_task_processing(settings, task.id)
-    return task
+    return task, keyword_collision_warnings
 
 
 def start_task_processing(settings: Settings, task_id: int) -> None:
@@ -234,6 +382,8 @@ def load_or_create_task_snapshot(db: Session, task: Task) -> list[dict]:
                     [{"id": template.id, "name": template.template_name}],
                     ensure_ascii=False,
                 ),
+                keyword_collision_warnings_json="[]",
+                collision_priority_json=None,
             )
             db.add(snap)
             db.commit()
@@ -265,6 +415,76 @@ def get_task_source_templates(db: Session, task_id: int) -> list[dict[str, Any]]
         if "id" not in item or "name" not in item:
             continue
         normalized.append({"id": item["id"], "name": item["name"]})
+    return normalized
+
+
+def get_task_keyword_collision_warnings(db: Session, task_id: int) -> list[dict[str, Any]]:
+    snap = (
+        db.query(TaskConfigSnapshot)
+        .filter(TaskConfigSnapshot.task_id == task_id)
+        .order_by(TaskConfigSnapshot.id.desc())
+        .first()
+    )
+    if not snap or not snap.keyword_collision_warnings_json:
+        return []
+    try:
+        warnings = json.loads(snap.keyword_collision_warnings_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(warnings, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in warnings:
+        if not isinstance(item, dict):
+            continue
+        if "winner_keyword" not in item:
+            continue
+        matched_keywords = item.get("matched_keywords", [])
+        if not isinstance(matched_keywords, list):
+            matched_keywords = []
+        suppressed_keywords = item.get("suppressed_keywords", [])
+        if not isinstance(suppressed_keywords, list):
+            suppressed_keywords = []
+        normalized.append(
+            {
+                "subtitle_index": int(item.get("subtitle_index", 0)),
+                "start": str(item.get("start", "")),
+                "end": str(item.get("end", "")),
+                "text": str(item.get("text", "")),
+                "matched_keywords": [str(keyword) for keyword in matched_keywords],
+                "winner_keyword": str(item.get("winner_keyword", "")),
+                "suppressed_keywords": [str(keyword) for keyword in suppressed_keywords],
+            }
+        )
+    return normalized
+
+
+def get_task_collision_priority(db: Session, task_id: int) -> dict[int, list[str]]:
+    snap = (
+        db.query(TaskConfigSnapshot)
+        .filter(TaskConfigSnapshot.task_id == task_id)
+        .order_by(TaskConfigSnapshot.id.desc())
+        .first()
+    )
+    if not snap or not snap.collision_priority_json:
+        return {}
+    try:
+        payload = json.loads(snap.collision_priority_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    normalized: dict[int, list[str]] = {}
+    for key, value in payload.items():
+        try:
+            subtitle_index = int(key)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(value, list):
+            continue
+        keywords = [str(item).strip() for item in value if str(item).strip()]
+        if keywords:
+            normalized[subtitle_index] = keywords
     return normalized
 
 
@@ -459,9 +679,14 @@ def process_task(settings: Settings, task_id: int) -> None:
                 _clear_stop_requested(task_id)
                 return
 
+            subtitle_encoding = (
+                "utf-8"
+                if (task.subtitle_source or "uploaded").strip().lower() == "asr"
+                else settings_row.subtitle_encoding
+            )
             subtitles = parse_srt(
                 task.subtitle_path,
-                encoding=settings_row.subtitle_encoding,
+                encoding=subtitle_encoding,
                 time_offset_seconds=float(settings_row.subtitle_time_offset_seconds),
             )
 
@@ -472,7 +697,13 @@ def process_task(settings: Settings, task_id: int) -> None:
                 _clear_stop_requested(task_id)
                 return
 
-            events = build_match_events(db, subtitles, config_snapshot)
+            collision_priority_by_subtitle = get_task_collision_priority(db, task.id)
+            events = build_match_events(
+                db,
+                subtitles,
+                config_snapshot,
+                collision_priority_by_subtitle=collision_priority_by_subtitle,
+            )
             events = attach_random_sound_effects(db, events)
 
             report_path = normalize_storage_path(

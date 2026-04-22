@@ -23,10 +23,10 @@ class VideoProbe:
 
 
 def _ff_filter_path(path: str) -> str:
-    p = Path(path).as_posix()
-    if len(p) >= 2 and p[1] == ":":
-        p = p[0] + "\\:" + p[2:]
-    return p
+    value = Path(path).as_posix()
+    if len(value) >= 2 and value[1] == ":":
+        value = value[0] + "\\:" + value[2:]
+    return value
 
 
 def probe_video(settings: Settings, video_path: str) -> VideoProbe:
@@ -45,10 +45,10 @@ def probe_video(settings: Settings, video_path: str) -> VideoProbe:
     )
     data = json.loads(out)
     streams = data.get("streams") or []
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     if not video_stream:
         raise RuntimeError("ffprobe 未返回视频流信息")
-    has_audio = any(s.get("codec_type") == "audio" for s in streams)
+    has_audio = any(stream.get("codec_type") == "audio" for stream in streams)
     duration = float(data.get("format", {}).get("duration") or 0.0)
     return VideoProbe(
         width=int(video_stream["width"]),
@@ -97,26 +97,91 @@ def export_audio_track(
         )
 
 
+def strip_video_audio(
+    settings: Settings,
+    *,
+    input_path: str,
+    output_path: str,
+) -> None:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    cmd_copy = [
+        settings.ffmpeg_bin,
+        "-y",
+        "-i",
+        input_path,
+        "-an",
+        "-c:v",
+        "copy",
+        output_path,
+    ]
+    proc_copy = subprocess.run(
+        cmd_copy,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if proc_copy.returncode == 0:
+        return
+
+    cmd_reencode = [
+        settings.ffmpeg_bin,
+        "-y",
+        "-i",
+        input_path,
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        output_path,
+    ]
+    proc_reencode = subprocess.run(
+        cmd_reencode,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if proc_reencode.returncode != 0:
+        message = (
+            proc_reencode.stderr.strip()
+            or proc_reencode.stdout.strip()
+            or proc_copy.stderr.strip()
+            or proc_copy.stdout.strip()
+            or str(proc_reencode.returncode)
+        )
+        raise RuntimeError(f"视频去音轨失败: {message}")
+
+
 def grid_xy_expr(position: int) -> tuple[str, str]:
     pos = position if 1 <= position <= 9 else 9
     col = (pos - 1) % 3
     row = (pos - 1) // 3
-    x_factor = {0: "0", 1: "0.5", 2: "1"}[col]
-    y_factor = {0: "0", 1: "0.5", 2: "1"}[row]
+    x_factor = {0: "0.25", 1: "0.5", 2: "0.75"}[col]
+    y_factor = {0: "0.25", 1: "0.5", 2: "0.75"}[row]
     x = f"(main_w-overlay_w)*{x_factor}"
     y = f"(main_h-overlay_h)*{y_factor}"
     return x, y
 
 
 def resolution_scale(settings_resolution: str) -> tuple[int, int] | None:
-    r = (settings_resolution or "").upper()
-    if r == "720P":
+    value = (settings_resolution or "").upper()
+    if value == "720P":
         return (1280, 720)
-    if r == "1080P":
+    if value == "1080P":
         return (1920, 1080)
-    if r == "4K":
+    if value == "4K":
         return (3840, 2160)
     return None
+
+
+def _clip_duration(event: MatchEvent) -> float:
+    if event.video_duration_seconds and event.video_duration_seconds > 0:
+        return float(event.video_duration_seconds)
+    return max(0.01, event.end_time - event.start_time)
 
 
 def build_ffmpeg_command(
@@ -132,7 +197,7 @@ def build_ffmpeg_command(
     video_bitrate_kbps: int,
     add_subtitle_to_video: bool = False,
 ) -> list[str]:
-    success_events = [e for e in events if e.status == "success" and e.material_path]
+    success_events = [event for event in events if event.status == "success" and event.material_path]
     video_probe = probe_video(settings, video_path)
     canvas_w, canvas_h = video_probe.width, video_probe.height
 
@@ -156,6 +221,9 @@ def build_ffmpeg_command(
 
     def _is_gif(event: MatchEvent) -> bool:
         return event.material_type == "GIF"
+
+    def _is_video(event: MatchEvent) -> bool:
+        return event.material_type == "短视频"
 
     for material_path, occs in occurrences.items():
         idx = len(material_to_index) + 1
@@ -193,15 +261,24 @@ def build_ffmpeg_command(
             event = occs[0]
             max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
             max_h = max(1, canvas_h)
-            filters.append(
-                f"{src}setpts=PTS-STARTPTS,format=rgba,"
-                f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease[{branch}]"
-            )
+            if _is_video(event):
+                clip_duration = _clip_duration(event)
+                clip_start = max(0.0, event.video_start_seconds)
+                filters.append(
+                    f"{src}trim=start={clip_start}:duration={clip_duration},setpts=PTS-STARTPTS,"
+                    f"format=rgba,scale={max_w}:{max_h}:force_original_aspect_ratio=decrease[{branch}]"
+                )
+            else:
+                filters.append(
+                    f"{src}setpts=PTS-STARTPTS,format=rgba,"
+                    f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease[{branch}]"
+                )
+
             ov = f"ov_{input_idx}_0"
-            dur = max(0.01, event.end_time - event.start_time)
+            overlay_duration = max(0.01, event.end_time - event.start_time)
             opacity = max(0, min(100, event.opacity)) / 100.0
             filters.append(
-                f"[{branch}]trim=duration={dur},setpts=PTS-STARTPTS+{event.start_time}/TB,"
+                f"[{branch}]trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
                 f"colorchannelmixer=aa={opacity}[{ov}]"
             )
             overlay_labels.append((event, ov))
@@ -213,15 +290,25 @@ def build_ffmpeg_command(
             filters.append(f"[{base}]split={len(occs)}{split_outputs}")
             for i, event in enumerate(occs):
                 ov = f"ov_{input_idx}_{i}"
-                dur = max(0.01, event.end_time - event.start_time)
+                overlay_duration = max(0.01, event.end_time - event.start_time)
                 opacity = max(0, min(100, event.opacity)) / 100.0
                 max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
                 max_h = max(1, canvas_h)
-                filters.append(
-                    f"[{base}_{i}]scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
-                    f"trim=duration={dur},setpts=PTS-STARTPTS+{event.start_time}/TB,"
-                    f"colorchannelmixer=aa={opacity}[{ov}]"
-                )
+                if _is_video(event):
+                    clip_duration = _clip_duration(event)
+                    clip_start = max(0.0, event.video_start_seconds)
+                    filters.append(
+                        f"[{base}_{i}]trim=start={clip_start}:duration={clip_duration},setpts=PTS-STARTPTS,"
+                        f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
+                        f"trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
+                        f"colorchannelmixer=aa={opacity}[{ov}]"
+                    )
+                else:
+                    filters.append(
+                        f"[{base}_{i}]scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
+                        f"trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
+                        f"colorchannelmixer=aa={opacity}[{ov}]"
+                    )
                 overlay_labels.append((event, ov))
 
     current = base_label
@@ -236,10 +323,8 @@ def build_ffmpeg_command(
     video_output_label = current
     if add_subtitle_to_video:
         subtitle_filter_path = _ff_filter_path(subtitle_path)
-        enc = subtitle_encoding or "utf-8"
-        filters.append(
-            f"[{current}]subtitles='{subtitle_filter_path}':charenc='{enc}'[vout]"
-        )
+        encoding = subtitle_encoding or "utf-8"
+        filters.append(f"[{current}]subtitles='{subtitle_filter_path}':charenc='{encoding}'[vout]")
         video_output_label = "vout"
 
     has_sound_effect = len(sound_effect_events) > 0
@@ -356,7 +441,7 @@ def run_ffmpeg(
                         process.kill()
                     except Exception:
                         pass
-                raise RuntimeError(f"FFmpeg ??????? {int(max_run_seconds)} ?")
+                raise RuntimeError(f"FFmpeg 运行超时（>{int(max_run_seconds)} 秒）")
 
             if should_stop and should_stop():
                 try:
@@ -376,4 +461,4 @@ def run_ffmpeg(
 
         file_handle.write("\n")
         if process.returncode != 0:
-            raise RuntimeError(f"FFmpeg ???????? {process.returncode}")
+            raise RuntimeError(f"FFmpeg 执行失败，返回码 {process.returncode}")

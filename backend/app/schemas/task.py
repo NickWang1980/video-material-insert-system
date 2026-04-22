@@ -15,6 +15,16 @@ class SourceVideoRef(BaseModel):
     name: str
 
 
+class KeywordCollisionWarning(BaseModel):
+    subtitle_index: int
+    start: str
+    end: str
+    text: str
+    matched_keywords: list[str] = Field(default_factory=list)
+    winner_keyword: str
+    suppressed_keywords: list[str] = Field(default_factory=list)
+
+
 class TaskResponse(BaseModel):
     id: int
     task_name: str
@@ -32,10 +42,25 @@ class TaskResponse(BaseModel):
     source_video: SourceVideoRef | None = None
     subtitle_source: str = "uploaded"
     add_subtitle_to_video: bool = False
+    keyword_collision_warnings: list[KeywordCollisionWarning] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskCreateResponse(TaskResponse):
+    pass
 
 
 class TaskListResponse(BaseModel):
     items: list[TaskResponse]
     total: int
+
+
+class KeywordCollisionCheckRequest(BaseModel):
+    source_entry_id: int
+    config_ids: list[int]
+    subtitle_source: str = "uploaded"
+
+
+class KeywordCollisionCheckResponse(BaseModel):
+    warnings: list[KeywordCollisionWarning] = Field(default_factory=list)

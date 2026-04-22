@@ -17,6 +17,7 @@ logger = get_logger()
 _running_asr_entry_ids: set[int] = set()
 _asr_lock = threading.Lock()
 DEFAULT_ASR_RETRY_MAX = 3
+_opencc_converter = None
 
 
 def _normalize_asr_model(asr_model: str | None) -> str:
@@ -63,6 +64,7 @@ def schedule_asr_for_source_entry(
         if force_retry:
             entry.asr_retry_count = 0
             entry.asr_status = "pending"
+            entry.asr_progress = 0
             entry.asr_error = None
         db.commit()
     finally:
@@ -96,12 +98,14 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
             db.refresh(entry)
             if int(entry.asr_retry_count or 0) >= retry_max:
                 entry.asr_status = "failed"
+                entry.asr_progress = 100
                 if not entry.asr_error:
                     entry.asr_error = "ASR 重试次数已达上限"
                 db.commit()
                 break
 
             entry.asr_status = "running"
+            entry.asr_progress = max(35, int(entry.asr_progress or 0))
             entry.asr_error = None
             entry.asr_model_used = asr_model
             db.commit()
@@ -113,7 +117,11 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
                 if not Path(audio_path).exists():
                     raise RuntimeError("音轨文件不存在")
 
+                entry.asr_progress = 45
+                db.commit()
                 segments = transcribe_audio_segments(audio_path=audio_path, model_name=asr_model)
+                entry.asr_progress = 75
+                db.commit()
 
                 output_file_name = _safe_srt_file_name(entry.name, f"source_{entry.id}")
                 output_path = (
@@ -125,11 +133,14 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
                     / output_file_name
                 )
                 write_segments_to_srt(output_path=output_path, segments=segments)
+                entry.asr_progress = 90
+                db.commit()
                 parsed = parse_srt(str(output_path), encoding="utf-8", time_offset_seconds=0.0)
 
                 entry.asr_srt_path = normalize_storage_path(output_path)
                 entry.subtitle_line_count_asr = len(parsed)
                 entry.asr_status = "completed"
+                entry.asr_progress = 100
                 entry.asr_error = None
                 db.commit()
                 break
@@ -140,6 +151,7 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
 
                 if entry.asr_retry_count < retry_max:
                     entry.asr_status = "pending"
+                    entry.asr_progress = 10
                     entry.asr_error = (
                         f"第 {entry.asr_retry_count}/{retry_max} 次识别失败，准备自动重试: {str(exc)[:300]}"
                     )
@@ -149,6 +161,7 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
                     continue
 
                 entry.asr_status = "failed"
+                entry.asr_progress = 100
                 entry.asr_error = str(exc)[:1000]
                 db.commit()
                 break
@@ -190,6 +203,23 @@ def resume_pending_asr_jobs(settings: Settings) -> int:
         db.close()
 
 
+def _get_opencc_converter():
+    global _opencc_converter
+    if _opencc_converter is not None:
+        return _opencc_converter
+    try:
+        from opencc import OpenCC
+    except Exception as exc:
+        raise RuntimeError("ASR 简体转换依赖缺失，请安装 opencc-python-reimplemented") from exc
+    _opencc_converter = OpenCC("t2s")
+    return _opencc_converter
+
+
+def _to_simplified_chinese(text: str) -> str:
+    converter = _get_opencc_converter()
+    return converter.convert(text)
+
+
 def transcribe_audio_segments(*, audio_path: str, model_name: str) -> list[dict]:
     try:
         from faster_whisper import WhisperModel
@@ -197,13 +227,19 @@ def transcribe_audio_segments(*, audio_path: str, model_name: str) -> list[dict]
         raise RuntimeError("faster-whisper 未安装或加载失败") from exc
 
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(audio_path, vad_filter=True)
+    segments, _ = model.transcribe(
+        audio_path,
+        vad_filter=True,
+        language="zh",
+        task="transcribe",
+    )
 
     normalized: list[dict] = []
     for segment in segments:
         text = (getattr(segment, "text", "") or "").strip()
         if not text:
             continue
+        text = _to_simplified_chinese(text)
         start = max(0.0, float(getattr(segment, "start", 0.0) or 0.0))
         end = max(start + 0.01, float(getattr(segment, "end", start + 0.01) or (start + 0.01)))
         normalized.append({"start": start, "end": end, "text": text})

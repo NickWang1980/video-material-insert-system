@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -11,13 +12,22 @@ from ..config import Settings
 from ..dependencies import get_app_settings, get_db
 from ..models.task import Task
 from ..schemas.common import MessageResponse
-from ..schemas.task import TaskResponse, TaskListResponse, SourceVideoRef
+from ..schemas.task import (
+    KeywordCollisionCheckRequest,
+    KeywordCollisionCheckResponse,
+    SourceVideoRef,
+    TaskCreateResponse,
+    TaskListResponse,
+    TaskResponse,
+)
 from ..services.task_service import (
     AsrSubtitleUnavailableError,
     SourceVideoEntryNotFoundError,
     TemplateKeywordConflictError,
     TemplateNotFoundError,
+    build_keyword_collision_warnings_for_task,
     create_task,
+    get_task_keyword_collision_warnings,
     get_task_source_templates,
     get_task_source_video,
     request_stop_task,
@@ -75,21 +85,106 @@ def _task_to_response(task: Task, settings: Settings, db: Session) -> TaskRespon
         source_video=source_video_ref,
         subtitle_source=task.subtitle_source or "uploaded",
         add_subtitle_to_video=bool(task.add_subtitle_to_video),
+        keyword_collision_warnings=get_task_keyword_collision_warnings(db, task.id),
     )
 
 
-@router.post("", response_model=TaskResponse)
+def _translate_task_creation_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, SourceVideoEntryNotFoundError):
+        return HTTPException(
+            status_code=404,
+            detail={
+                "message": "源视频条目不存在",
+                "source_entry_id": exc.source_entry_id,
+            },
+        )
+    if isinstance(exc, TemplateNotFoundError):
+        return HTTPException(
+            status_code=404,
+            detail={
+                "message": "模板不存在",
+                "missing_template_ids": exc.missing_template_ids,
+            },
+        )
+    if isinstance(exc, TemplateKeywordConflictError):
+        conflicts = [
+            {"keyword": keyword, "template_names": template_names}
+            for keyword, template_names in exc.conflicts.items()
+        ]
+        return HTTPException(
+            status_code=400,
+            detail={
+                "message": "模板关键词冲突，请调整模板组合",
+                "conflicts": conflicts,
+            },
+        )
+    if isinstance(exc, AsrSubtitleUnavailableError):
+        return HTTPException(
+            status_code=400,
+            detail={
+                "message": "ASR 字幕不可用",
+                "source_entry_id": exc.source_entry_id,
+                "reason": exc.reason,
+            },
+        )
+    return HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/keyword-collision-check", response_model=KeywordCollisionCheckResponse)
+async def api_keyword_collision_check(
+    payload: KeywordCollisionCheckRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        warnings = build_keyword_collision_warnings_for_task(
+            db=db,
+            source_entry_id=payload.source_entry_id,
+            config_ids=payload.config_ids,
+            subtitle_source=payload.subtitle_source,
+        )
+    except Exception as exc:
+        raise _translate_task_creation_error(exc) from exc
+    return KeywordCollisionCheckResponse(
+        warnings=[item.__dict__ for item in warnings]
+    )
+
+
+@router.post("", response_model=TaskCreateResponse)
 async def api_create_task(
     task_name: str = Form(...),
     source_entry_id: int = Form(...),
     config_ids: list[int] = Form(...),
     subtitle_source: str = Form("uploaded"),
     add_subtitle_to_video: bool = Form(False),
+    collision_priority_json: str | None = Form(None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
 ):
+    collision_priority: dict[int, list[str]] | None = None
+    if collision_priority_json:
+        try:
+            raw = json.loads(collision_priority_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="collision_priority_json 不是合法 JSON") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="collision_priority_json 必须为对象")
+        normalized: dict[int, list[str]] = {}
+        for key, value in raw.items():
+            try:
+                subtitle_index = int(key)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(value, list):
+                continue
+            keywords = [str(item).strip() for item in value if str(item).strip()]
+            if keywords:
+                normalized[subtitle_index] = keywords
+        collision_priority = normalized
+
     try:
-        task = create_task(
+        task, warnings = create_task(
             settings=settings,
             db=db,
             task_name=task_name,
@@ -97,48 +192,14 @@ async def api_create_task(
             config_ids=config_ids,
             subtitle_source=subtitle_source,
             add_subtitle_to_video=add_subtitle_to_video,
+            collision_priority=collision_priority,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except SourceVideoEntryNotFoundError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "message": "源视频条目不存在",
-                "source_entry_id": exc.source_entry_id,
-            },
-        ) from exc
-    except TemplateNotFoundError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "message": "模板不存在",
-                "missing_template_ids": exc.missing_template_ids,
-            },
-        ) from exc
-    except TemplateKeywordConflictError as exc:
-        conflicts = [
-            {"keyword": keyword, "template_names": template_names}
-            for keyword, template_names in exc.conflicts.items()
-        ]
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "模板关键词冲突，请调整模板组合",
-                "conflicts": conflicts,
-            },
-        ) from exc
-    except AsrSubtitleUnavailableError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "ASR 字幕不可用",
-                "source_entry_id": exc.source_entry_id,
-                "reason": exc.reason,
-            },
-        ) from exc
+    except Exception as exc:
+        raise _translate_task_creation_error(exc) from exc
 
-    return _task_to_response(task, settings, db)
+    response = _task_to_response(task, settings, db)
+    response.keyword_collision_warnings = [item.__dict__ for item in warnings]
+    return TaskCreateResponse(**response.model_dump())
 
 
 @router.get("", response_model=TaskListResponse)

@@ -21,6 +21,7 @@ export async function createTask({
   config_ids,
   subtitle_source = "uploaded",
   add_subtitle_to_video = false,
+  collision_priority = null,
 }) {
   const form = new FormData();
   form.append("task_name", task_name);
@@ -28,7 +29,23 @@ export async function createTask({
   form.append("subtitle_source", subtitle_source === "asr" ? "asr" : "uploaded");
   form.append("add_subtitle_to_video", String(!!add_subtitle_to_video));
   (config_ids || []).forEach((id) => form.append("config_ids", String(id)));
+  if (collision_priority && typeof collision_priority === "object") {
+    form.append("collision_priority_json", JSON.stringify(collision_priority));
+  }
   const { data } = await api.post("/tasks", form);
+  return data;
+}
+
+export async function checkKeywordCollision({
+  source_entry_id,
+  config_ids,
+  subtitle_source = "uploaded",
+}) {
+  const { data } = await api.post("/tasks/keyword-collision-check", {
+    source_entry_id,
+    config_ids: config_ids || [],
+    subtitle_source: subtitle_source === "asr" ? "asr" : "uploaded",
+  });
   return data;
 }
 

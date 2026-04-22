@@ -13,10 +13,12 @@ class SourceVideoEntryResponse(BaseModel):
     video_width: int
     video_height: int
     video_aspect_ratio: str
+    video_duration_seconds: float | None = None
     audio_wav_path: str | None = None
     audio_flac_path: str | None = None
     asr_srt_path: str | None = None
     asr_status: str
+    asr_progress: int = 0
     asr_error: str | None = None
     asr_retry_count: int = 0
     asr_retry_max: int = 3

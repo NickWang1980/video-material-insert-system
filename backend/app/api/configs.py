@@ -29,7 +29,7 @@ def extract_keywords(config_content: str) -> list[str]:
     for item in config:
         if not isinstance(item, dict):
             continue
-        keyword_value = item.get("关键字")
+        keyword_value = item.get("关键词")
         keyword = keyword_value if isinstance(keyword_value, str) else str(keyword_value or "")
         keyword = keyword.strip()
         if not keyword or keyword in seen:

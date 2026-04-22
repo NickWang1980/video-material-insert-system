@@ -11,6 +11,7 @@ from backend.app.services.task_service import (
     TemplateKeywordConflictError,
     TemplateNotFoundError,
     attach_random_sound_effects,
+    detect_keyword_collision_warnings,
     merge_templates_and_validate_keywords,
 )
 
@@ -148,3 +149,42 @@ def test_merge_templates_missing_template():
     with pytest.raises(TemplateNotFoundError) as exc_info:
         merge_templates_and_validate_keywords(db, [1, 3])
     assert exc_info.value.missing_template_ids == [3]
+
+
+def test_detect_keyword_collision_warnings_longest_keyword_wins():
+    subtitles = [
+        {
+            "index": 1,
+            "start": "00:00:01,000",
+            "end": "00:00:03,000",
+            "text": "快乐老家欢迎你",
+        }
+    ]
+    config = [
+        {"关键字": "快乐"},
+        {"关键字": "快乐老家"},
+        {"关键字": "老家"},
+    ]
+    warnings = detect_keyword_collision_warnings(subtitles, config)
+    assert len(warnings) == 1
+    assert warnings[0].winner_keyword == "快乐老家"
+    assert set(warnings[0].suppressed_keywords) == {"快乐", "老家"}
+
+
+def test_detect_keyword_collision_warnings_same_length_use_rule_order():
+    subtitles = [
+        {
+            "index": 2,
+            "start": "00:00:05,000",
+            "end": "00:00:06,000",
+            "text": "抖音快手都在这里",
+        }
+    ]
+    config = [
+        {"关键字": "抖音"},
+        {"关键字": "快手"},
+    ]
+    warnings = detect_keyword_collision_warnings(subtitles, config)
+    assert len(warnings) == 1
+    assert warnings[0].winner_keyword == "抖音"
+    assert warnings[0].suppressed_keywords == ["快手"]

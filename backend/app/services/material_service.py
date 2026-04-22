@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..models.material_folder_binding import MaterialFolderBinding
 from ..models.material import Material
+from ..models.material_product import MaterialProduct
+from ..models.material_script_folder import MaterialScriptFolder
 from ..utils.csv_utils import (
     DEFAULT_SIZE_RATIO_PERCENT,
+    DEFAULT_VIDEO_SIZE_RATIO_PERCENT,
     MAX_SIZE_RATIO_PERCENT,
     MIN_SIZE_RATIO_PERCENT,
 )
@@ -37,47 +41,202 @@ class MatchEvent:
     sound_effect_status: str | None = None
     sound_effect_reason: str | None = None
     sound_effect_path: str | None = None
+    video_start_seconds: float = 0.0
+    video_duration_seconds: float | None = None
+
+
+def _build_subtitle_winner_map(
+    subtitles: list[dict[str, Any]],
+    config: list[dict[str, Any]],
+    collision_priority_by_subtitle: dict[int, list[str]] | None = None,
+) -> dict[int, str]:
+    indexed_keywords: list[tuple[int, str]] = []
+    for order, rule in enumerate(config):
+        if not isinstance(rule, dict):
+            continue
+        keyword_raw = rule.get("关键词")
+        keyword = keyword_raw if isinstance(keyword_raw, str) else str(keyword_raw or "")
+        keyword = keyword.strip()
+        if keyword:
+            indexed_keywords.append((order, keyword))
+
+    winner_map: dict[int, str] = {}
+    for subtitle in subtitles:
+        subtitle_index = int(subtitle.get("index", 0))
+        subtitle_text = str(subtitle.get("text", "") or "")
+        matched = [(order, keyword) for order, keyword in indexed_keywords if keyword in subtitle_text]
+        if len(matched) <= 1:
+            continue
+        if collision_priority_by_subtitle:
+            override_order = collision_priority_by_subtitle.get(subtitle_index, [])
+            if override_order:
+                matched_keywords = {keyword for _, keyword in matched}
+                winner_by_override = next(
+                    (keyword for keyword in override_order if keyword in matched_keywords),
+                    None,
+                )
+                if winner_by_override:
+                    winner_map[subtitle_index] = winner_by_override
+                    continue
+        matched.sort(key=lambda item: (-len(item[1]), item[0]))
+        winner_map[subtitle_index] = matched[0][1]
+    return winner_map
+
+
+def _default_grid_position(material_type: str) -> int:
+    if material_type in {"图片", "GIF"}:
+        return 1
+    return 9
+
+
+def _default_duration(material_type: str) -> float | None:
+    if material_type in {"图片", "GIF"}:
+        return 2.0
+    return None
+
+
+def _default_size_ratio(material_type: str) -> float:
+    if material_type == "短视频":
+        return float(DEFAULT_VIDEO_SIZE_RATIO_PERCENT)
+    return float(DEFAULT_SIZE_RATIO_PERCENT)
+
+
+def _find_material_by_scope(
+    db: Session,
+    *,
+    file_name: str,
+    library_scope: str,
+    product_name: str,
+    script_folder_name: str,
+) -> tuple[Material | None, str | None]:
+    if library_scope == "产品分类素材":
+        if not product_name or not script_folder_name:
+            return None, "产品分类素材缺少产品目录或脚本子文件夹"
+
+        product = db.query(MaterialProduct).filter(MaterialProduct.name == product_name).first()
+        if product is None:
+            return None, f"产品目录不存在: {product_name}"
+
+        script_folder = (
+            db.query(MaterialScriptFolder)
+            .filter(
+                MaterialScriptFolder.product_id == product.id,
+                MaterialScriptFolder.name == script_folder_name,
+            )
+            .first()
+        )
+        if script_folder is None:
+            return None, f"脚本子文件夹不存在: {product_name}/{script_folder_name}"
+
+        material = (
+            db.query(Material)
+            .join(
+                MaterialFolderBinding,
+                MaterialFolderBinding.material_id == Material.id,
+            )
+            .filter(
+                MaterialFolderBinding.script_folder_id == script_folder.id,
+                Material.file_name == file_name,
+            )
+            .first()
+        )
+        if material is None:
+            return None, "当前产品脚本目录下素材不存在"
+        return material, None
+
+    if library_scope == "未归档":
+        material = (
+            db.query(Material)
+            .filter(
+                Material.library_kind == "unfiled",
+                Material.file_name == file_name,
+            )
+            .first()
+        )
+        if material is None:
+            return None, "未归档素材库中素材不存在"
+        return material, None
+
+    material = (
+        db.query(Material)
+        .filter(
+            Material.library_kind == "general",
+            Material.file_name == file_name,
+        )
+        .first()
+    )
+    if material is None:
+        return None, "定量素材库中素材不存在"
+    return material, None
 
 
 def build_match_events(
-    db: Session, subtitles: list[dict[str, Any]], config: list[dict[str, Any]]
+    db: Session,
+    subtitles: list[dict[str, Any]],
+    config: list[dict[str, Any]],
+    collision_priority_by_subtitle: dict[int, list[str]] | None = None,
 ) -> list[MatchEvent]:
     events: list[MatchEvent] = []
+    subtitle_winner_map = _build_subtitle_winner_map(
+        subtitles,
+        config,
+        collision_priority_by_subtitle=collision_priority_by_subtitle,
+    )
 
     for item in config:
-        keyword = str(item.get("关键字", "")).strip()
+        keyword = str(item.get("关键词", "")).strip()
         material_file_raw = str(item.get("素材文件名", "")).strip()
-        # Allow users to provide full paths in template CSV/editor.
-        # Matching is based on material library file name.
         material_file = Path(material_file_raw.replace("\\", "/")).name
         material_type = str(item.get("素材类型", "")).strip()
         if not keyword or not material_file or not material_type:
             continue
 
-        position = int(item.get("九宫格位置", 9) or 9)
-        duration = item.get("显示时长(秒)", None)
+        library_scope = str(item.get("素材库分类", "定量素材") or "定量素材").strip() or "定量素材"
+        product_name = str(item.get("产品目录", "") or "").strip()
+        script_folder_name = str(item.get("脚本子文件夹", "") or "").strip()
+
+        position = int(
+            item.get("九宫格位置", _default_grid_position(material_type))
+            or _default_grid_position(material_type)
+        )
+        duration = item.get("显示时长(秒)", _default_duration(material_type))
+        if duration in ("", None):
+            duration = _default_duration(material_type)
         offset = float(item.get("入场偏移(秒)", 0) or 0)
         opacity = int(item.get("透明度", 100) or 100)
         loop = int(item.get("是否循环", 0) or 0)
         trigger_rule = str(item.get("触发规则", "每次触发") or "每次触发").strip()
         cue_sound_config = str(item.get("提示音", "随机") or "随机").strip() or "随机"
         size_ratio_percent = float(
-            item.get("素材宽度占比(%)", DEFAULT_SIZE_RATIO_PERCENT)
-            or DEFAULT_SIZE_RATIO_PERCENT
+            item.get("素材宽度占比(%)", _default_size_ratio(material_type))
+            or _default_size_ratio(material_type)
         )
+        if material_type == "短视频" and size_ratio_percent not in (70.0, 100.0):
+            size_ratio_percent = float(DEFAULT_VIDEO_SIZE_RATIO_PERCENT)
         size_ratio_percent = max(
             float(MIN_SIZE_RATIO_PERCENT),
             min(float(MAX_SIZE_RATIO_PERCENT), size_ratio_percent),
         )
 
-        material = (
-            db.query(Material).filter(Material.file_name == material_file).first()
+        video_start_seconds = float(item.get("视频起始秒(秒)", 0) or 0)
+        video_start_seconds = max(0.0, video_start_seconds)
+        video_duration_value = item.get("视频持续秒(秒)", None)
+        video_duration_seconds = (
+            float(video_duration_value) if video_duration_value not in (None, "") else None
+        )
+        if video_duration_seconds is not None and video_duration_seconds <= 0:
+            video_duration_seconds = None
+
+        material, lookup_error = _find_material_by_scope(
+            db,
+            file_name=material_file,
+            library_scope=library_scope,
+            product_name=product_name,
+            script_folder_name=script_folder_name,
         )
         material_path = None
-        material_fail_reason = None
-        if material is None:
-            material_fail_reason = "素材不存在"
-        else:
+        material_fail_reason = lookup_error
+        if material is not None:
             material_path = material.file_path
             if not os.path.exists(material_path):
                 material_fail_reason = "素材文件不存在"
@@ -88,6 +247,36 @@ def build_match_events(
                 continue
 
             matched = True
+            subtitle_index = int(sub.get("index", 0))
+            winner_keyword = subtitle_winner_map.get(subtitle_index)
+            if winner_keyword and winner_keyword != keyword:
+                events.append(
+                    MatchEvent(
+                        keyword=keyword,
+                        subtitle_index=subtitle_index,
+                        subtitle_text=str(sub.get("text", "")),
+                        material_file_name=material_file,
+                        material_type=material_type,
+                        position=position,
+                        opacity=opacity,
+                        loop=loop,
+                        trigger_rule=trigger_rule,
+                        size_ratio_percent=size_ratio_percent,
+                        start_time=max(0.0, float(sub.get("start_seconds", 0)) + offset),
+                        end_time=max(0.0, float(sub.get("end_seconds", 0)) + offset),
+                        status="failed",
+                        reason=f"被长词覆盖: {winner_keyword}",
+                        material_path=material_path,
+                        cue_sound_config=cue_sound_config,
+                        sound_effect_status="未播放",
+                        video_start_seconds=video_start_seconds,
+                        video_duration_seconds=video_duration_seconds,
+                    )
+                )
+                if trigger_rule == "首次触发":
+                    break
+                continue
+
             start_time = float(sub.get("start_seconds", 0)) + offset
             base_end = float(sub.get("end_seconds", 0)) + offset
             if duration is None or duration == "":
@@ -107,7 +296,7 @@ def build_match_events(
             events.append(
                 MatchEvent(
                     keyword=keyword,
-                    subtitle_index=int(sub.get("index", 0)),
+                    subtitle_index=subtitle_index,
                     subtitle_text=str(sub.get("text", "")),
                     material_file_name=material_file,
                     material_type=material_type,
@@ -123,6 +312,8 @@ def build_match_events(
                     material_path=material_path,
                     cue_sound_config=cue_sound_config,
                     sound_effect_status="未播放",
+                    video_start_seconds=video_start_seconds,
+                    video_duration_seconds=video_duration_seconds,
                 )
             )
 
@@ -145,10 +336,12 @@ def build_match_events(
                     start_time=0.0,
                     end_time=0.0,
                     status="failed",
-                    reason="未在字幕中匹配到关键字",
+                    reason="未在字幕中匹配到关键词",
                     material_path=material_path,
                     cue_sound_config=cue_sound_config,
                     sound_effect_status="未播放",
+                    video_start_seconds=video_start_seconds,
+                    video_duration_seconds=video_duration_seconds,
                 )
             )
 

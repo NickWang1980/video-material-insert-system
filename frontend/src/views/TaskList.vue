@@ -127,8 +127,15 @@ async function remove(id) {
 }
 
 async function onSubmit(payload) {
-  await taskStore.create(payload);
-  ElMessage.success("任务已创建");
+  const created = await taskStore.create(payload);
+  const warningCount = Array.isArray(created?.keyword_collision_warnings)
+    ? created.keyword_collision_warnings.length
+    : 0;
+  if (warningCount > 0) {
+    ElMessage.warning(`任务已创建，检测到 ${warningCount} 处近距离关键词冲突，已按长词优先处理`);
+  } else {
+    ElMessage.success("任务已创建");
+  }
   await Promise.all([reload(), sourceVideoStore.fetchList()]);
 }
 </script>

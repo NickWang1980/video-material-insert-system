@@ -59,6 +59,28 @@
           <a class="text-sm underline" :href="downloadLogUrl" target="_blank">下载日志</a>
         </div>
       </div>
+
+      <el-alert
+        v-if="Array.isArray(task.keyword_collision_warnings) && task.keyword_collision_warnings.length > 0"
+        class="mt-4"
+        type="warning"
+        show-icon
+        :closable="false"
+        title="任务创建时检测到近距离关键词冲突（已按长词优先处理）"
+      >
+        <div class="text-xs mt-1 space-y-2 max-h-40 overflow-auto pr-1">
+          <div
+            v-for="item in task.keyword_collision_warnings"
+            :key="`${item.subtitle_index}-${item.winner_keyword}`"
+            class="rounded bg-yellow-50 px-2 py-1"
+          >
+            <div>字幕行 #{{ item.subtitle_index }}（{{ item.start }} - {{ item.end }}）</div>
+            <div class="truncate">文本：{{ item.text }}</div>
+            <div>命中：{{ item.matched_keywords.join(" / ") }}</div>
+            <div>保留：{{ item.winner_keyword }}；抑制：{{ item.suppressed_keywords.join(" / ") }}</div>
+          </div>
+        </div>
+      </el-alert>
     </div>
 
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">

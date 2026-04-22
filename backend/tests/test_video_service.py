@@ -15,7 +15,12 @@ class _Settings:
     ffprobe_bin = "ffprobe"
 
 
-def _event(sound_effect_path: str | None = None, material_type: str = "图片") -> MatchEvent:
+def _event(
+    sound_effect_path: str | None = None,
+    material_type: str = "图片",
+    video_start_seconds: float = 0.0,
+    video_duration_seconds: float | None = None,
+) -> MatchEvent:
     return MatchEvent(
         keyword="家人们",
         subtitle_index=1,
@@ -36,6 +41,8 @@ def _event(sound_effect_path: str | None = None, material_type: str = "图片") 
         sound_effect_status="已添加" if sound_effect_path else "未播放",
         sound_effect_reason=None if sound_effect_path else "音效池为空",
         sound_effect_path=sound_effect_path,
+        video_start_seconds=video_start_seconds,
+        video_duration_seconds=video_duration_seconds,
     )
 
 
@@ -81,3 +88,23 @@ def test_build_ffmpeg_command_without_sound_effect(monkeypatch):
     cmd_str = " ".join(cmd)
     assert "-map 0:a?" in cmd_str
     assert "-c:a copy" in cmd_str
+
+
+def test_build_ffmpeg_command_short_video_clip_params(monkeypatch):
+    def _probe(_settings, _video_path):
+        return VideoProbe(width=1080, height=1920, duration=60.0, has_audio=False)
+
+    monkeypatch.setattr("backend.app.services.video_service.probe_video", _probe)
+    cmd = build_ffmpeg_command(
+        _Settings(),
+        video_path="C:/tmp/in.mp4",
+        subtitle_path="C:/tmp/in.srt",
+        subtitle_encoding="utf-8",
+        events=[_event(None, material_type="短视频", video_start_seconds=2.0, video_duration_seconds=4.0)],
+        output_path="C:/tmp/out.mp4",
+        output_format="MP4",
+        resolution="1080P",
+        video_bitrate_kbps=1500,
+    )
+    cmd_str = " ".join(cmd)
+    assert "trim=start=2.0:duration=4.0" in cmd_str

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -18,10 +18,12 @@ class SourceVideoEntry(Base):
     video_width: Mapped[int] = mapped_column(Integer)
     video_height: Mapped[int] = mapped_column(Integer)
     video_aspect_ratio: Mapped[str] = mapped_column(String(20))
+    video_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     audio_wav_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     audio_flac_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     asr_srt_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     asr_status: Mapped[str] = mapped_column(String(20), default="pending")
+    asr_progress: Mapped[int] = mapped_column(Integer, default=0)
     asr_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     asr_retry_count: Mapped[int] = mapped_column(Integer, default=0)
     asr_retry_max: Mapped[int] = mapped_column(Integer, default=3)

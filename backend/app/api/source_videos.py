@@ -64,6 +64,13 @@ def _entry_to_response(entry: SourceVideoEntry) -> SourceVideoEntryResponse:
     has_uploaded_srt = bool(entry.subtitle_path and Path(entry.subtitle_path).exists())
     has_asr_srt = bool(entry.asr_srt_path and Path(entry.asr_srt_path).exists())
     effective_asr_status = "completed" if has_asr_srt else (entry.asr_status or "pending")
+    asr_progress = int(entry.asr_progress or 0)
+    if has_asr_srt:
+        asr_progress = 100
+    elif effective_asr_status in {"running", "pending"} and asr_progress <= 0:
+        asr_progress = 10 if effective_asr_status == "pending" else 35
+    elif effective_asr_status == "failed" and asr_progress <= 0:
+        asr_progress = 100
     return SourceVideoEntryResponse(
         id=entry.id,
         name=entry.name,
@@ -72,10 +79,12 @@ def _entry_to_response(entry: SourceVideoEntry) -> SourceVideoEntryResponse:
         video_width=entry.video_width,
         video_height=entry.video_height,
         video_aspect_ratio=entry.video_aspect_ratio,
+        video_duration_seconds=entry.video_duration_seconds,
         audio_wav_path=entry.audio_wav_path,
         audio_flac_path=entry.audio_flac_path,
         asr_srt_path=entry.asr_srt_path,
         asr_status=effective_asr_status,
+        asr_progress=max(0, min(100, asr_progress)),
         asr_error=entry.asr_error,
         asr_retry_count=int(entry.asr_retry_count or 0),
         asr_retry_max=int(entry.asr_retry_max or 3),
@@ -188,9 +197,11 @@ async def create_source_video_entry(
         video_width=int(probe.width),
         video_height=int(probe.height),
         video_aspect_ratio=_aspect_ratio_text(int(probe.width), int(probe.height)),
+        video_duration_seconds=float(probe.duration or 0.0),
         audio_wav_path=normalize_storage_path(wav_path),
         audio_flac_path=normalize_storage_path(flac_path),
         asr_status="pending",
+        asr_progress=0,
         asr_error=None,
         asr_retry_count=0,
         asr_retry_max=3,

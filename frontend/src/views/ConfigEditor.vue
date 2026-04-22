@@ -24,19 +24,65 @@
       </div>
 
       <el-table :data="rows" stripe style="width: 100%">
-        <el-table-column label="关键字" width="160">
+        <el-table-column label="关键词" width="160">
           <template #default="{ row }">
-            <el-input v-model="row['关键字']" />
+            <el-input v-model="row['关键词']" />
           </template>
         </el-table-column>
 
-        <el-table-column label="素材类型 / 素材文件名" width="520">
+        <el-table-column label="素材目录" width="360">
+          <template #default="{ row, $index }">
+            <div class="space-y-2">
+              <el-select
+                v-model="row['素材库分类']"
+                style="width: 120px"
+                @change="onScopeChange(row, $index)"
+              >
+                <el-option label="定量素材" value="定量素材" />
+                <el-option label="未归档" value="未归档" />
+                <el-option label="产品分类素材" value="产品分类素材" />
+              </el-select>
+              <div class="flex gap-2" v-if="row['素材库分类'] === '产品分类素材'">
+                <el-select
+                  v-model="row['产品目录']"
+                  style="width: 110px"
+                  filterable
+                  placeholder="产品目录"
+                  @change="onProductChange(row, $index)"
+                >
+                  <el-option
+                    v-for="item in productOptions"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.name"
+                  />
+                </el-select>
+                <el-select
+                  v-model="row['脚本子文件夹']"
+                  style="width: 120px"
+                  filterable
+                  placeholder="脚本子文件夹"
+                  @change="onScriptFolderChange(row, $index)"
+                >
+                  <el-option
+                    v-for="item in scriptOptionsByProduct(row['产品目录'])"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.name"
+                  />
+                </el-select>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="素材类型 / 素材文件名" width="360">
           <template #default="{ row, $index }">
             <div class="space-y-2">
               <div class="flex items-center gap-2">
                 <el-select
                   v-model="row['素材类型']"
-                  style="width: 110px"
+                  style="width: 96px"
                   @change="onMaterialTypeChange(row, $index)"
                 >
                   <el-option label="图片" value="图片" />
@@ -46,10 +92,10 @@
 
                 <el-select
                   v-model="row['素材文件名']"
-                  style="width: 300px"
+                  style="width: 220px"
                   filterable
                   :disabled="materialOptionsByRow(row).length === 0"
-                  :placeholder="materialOptionsByRow(row).length ? '请选择素材文件名' : '该类型下暂无素材'"
+                  :placeholder="materialOptionsByRow(row).length ? '请选择素材文件名' : '当前目录下暂无该类型素材'"
                   @visible-change="(visible) => onMaterialSelectVisibleChange($index, visible)"
                 >
                   <el-option
@@ -89,7 +135,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="提示音" width="320">
+        <el-table-column label="提示音" width="300">
           <template #default="{ row }">
             <div class="flex items-center gap-2">
               <el-select v-model="row['提示音']" style="width: 190px">
@@ -110,7 +156,34 @@
 
         <el-table-column label="显示时长(秒)" width="130">
           <template #default="{ row }">
-            <el-input-number v-model="row['显示时长(秒)']" :min="0" :step="0.1" />
+            <el-input-number
+              v-model="row['显示时长(秒)']"
+              :min="0"
+              :step="0.1"
+              :placeholder="row['素材类型'] === '短视频' ? '默认字幕时长' : '默认2秒'"
+            />
+          </template>
+        </el-table-column>
+
+        <el-table-column label="视频起始秒(秒)" width="140">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row['视频起始秒(秒)']"
+              :min="0"
+              :step="0.1"
+              :disabled="row['素材类型'] !== '短视频'"
+            />
+          </template>
+        </el-table-column>
+
+        <el-table-column label="视频持续秒(秒)" width="140">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row['视频持续秒(秒)']"
+              :min="0.1"
+              :step="0.1"
+              :disabled="row['素材类型'] !== '短视频'"
+            />
           </template>
         </el-table-column>
 
@@ -120,9 +193,11 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="九宫格位置" width="120">
-          <template #default="{ row }">
-            <el-input-number v-model="row['九宫格位置']" :min="1" :max="9" />
+        <el-table-column label="九宫格位置" width="140">
+          <template #default="{ row, $index }">
+            <el-button size="small" @click="openPositionSelector($index)">
+              位置 {{ normalizePosition(row['九宫格位置']) }}
+            </el-button>
           </template>
         </el-table-column>
 
@@ -147,9 +222,23 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="素材宽度占比(%)" width="150">
+        <el-table-column label="素材大小" width="160">
           <template #default="{ row }">
-            <el-input-number v-model="row['素材宽度占比(%)']" :min="5" :max="80" :step="1" />
+            <el-select
+              v-if="row['素材类型'] === '短视频'"
+              v-model="row['素材宽度占比(%)']"
+              style="width: 120px"
+            >
+              <el-option label="满屏 100%" :value="100" />
+              <el-option label="大屏 70%" :value="70" />
+            </el-select>
+            <el-input-number
+              v-else
+              v-model="row['素材宽度占比(%)']"
+              :min="5"
+              :max="100"
+              :step="1"
+            />
           </template>
         </el-table-column>
 
@@ -159,28 +248,27 @@
           </template>
         </el-table-column>
       </el-table>
-
-      <div class="pt-4 border-t border-gray-100">
-        <div class="font-bold mb-2">九宫格位置选择器</div>
-        <div class="flex items-center gap-6">
-          <GridSelector v-model="grid" />
-          <div class="text-sm text-gray-500">
-            选择后会写入当前“选中行”的九宫格位置（默认第一行）。
-          </div>
-        </div>
-      </div>
     </div>
   </div>
+
+  <el-dialog
+    v-model="positionDialogVisible"
+    title="选择九宫格位置（5×5参考）"
+    width="360px"
+    destroy-on-close
+  >
+    <GridSelector v-model="currentRowPosition" />
+  </el-dialog>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 
 import GridSelector from "../components/common/GridSelector.vue";
 import { useConfigStore } from "../store/modules/config";
-import { listMaterials, previewUrl } from "../api/material";
+import { getMaterialTree, listMaterials, previewUrl } from "../api/material";
 
 const props = defineProps({ id: { type: String, default: null } });
 const isEdit = computed(() => !!props.id);
@@ -204,14 +292,51 @@ const materialPools = ref({
   video: [],
 });
 const audioMaterials = ref([]);
+const materialTree = ref({ products: [] });
 const hoverPreviewByRow = ref({});
+const positionDialogVisible = ref(false);
+const selectedPositionRowIndex = ref(-1);
 let previewPlayer = null;
 
-const grid = ref(9);
-watch(grid, (value) => {
-  if (!rows.value.length) return;
-  rows.value[0]["九宫格位置"] = value;
+const productOptions = computed(() => materialTree.value.products || []);
+
+const currentRowPosition = computed({
+  get() {
+    if (selectedPositionRowIndex.value < 0) return 1;
+    const row = rows.value[selectedPositionRowIndex.value];
+    if (!row) return 1;
+    return normalizePosition(row["九宫格位置"]);
+  },
+  set(value) {
+    if (selectedPositionRowIndex.value < 0) return;
+    const row = rows.value[selectedPositionRowIndex.value];
+    if (!row) return;
+    row["九宫格位置"] = normalizePosition(value);
+  },
 });
+
+function normalizePosition(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 1;
+  return Math.min(9, Math.max(1, Math.round(num)));
+}
+
+function normalizeSizeRatio(materialType, value) {
+  if (materialType === "短视频") {
+    return Number(value) === 100 ? 100 : 70;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 25;
+  return Math.min(100, Math.max(5, Math.round(number)));
+}
+
+function defaultDurationByType(materialType) {
+  return materialType === "短视频" ? null : 2;
+}
+
+function defaultPositionByType(materialType) {
+  return materialType === "短视频" ? 9 : 1;
+}
 
 function sortByFileName(items) {
   return [...items].sort((a, b) => a.file_name.localeCompare(b.file_name, "zh-Hans-CN"));
@@ -221,9 +346,34 @@ function materialTypeToFileType(materialType) {
   return MATERIAL_TYPE_MAP[materialType] || "image";
 }
 
+function scriptOptionsByProduct(productName) {
+  const product = productOptions.value.find((item) => item.name === productName);
+  return product?.scripts || [];
+}
+
 function materialOptionsByRow(row) {
   const fileType = materialTypeToFileType(row["素材类型"]);
-  return materialPools.value[fileType] || [];
+  const all = materialPools.value[fileType] || [];
+  const scope = row["素材库分类"] || "定量素材";
+
+  if (scope === "产品分类素材") {
+    const productName = (row["产品目录"] || "").trim();
+    const scriptFolder = (row["脚本子文件夹"] || "").trim();
+    if (!productName || !scriptFolder) return [];
+    return all.filter((item) =>
+      (item.folder_links || []).some(
+        (link) =>
+          link.product_name === productName &&
+          link.script_folder_name === scriptFolder
+      )
+    );
+  }
+
+  if (scope === "未归档") {
+    return all.filter((item) => item.library_kind === "unfiled");
+  }
+
+  return all.filter((item) => item.library_kind === "general");
 }
 
 function findMaterialByName(row) {
@@ -259,6 +409,33 @@ function onMaterialTypeChange(row, index) {
   if (!exists) {
     row["素材文件名"] = "";
   }
+  if (row["显示时长(秒)"] == null || row["显示时长(秒)"] === "") {
+    row["显示时长(秒)"] = defaultDurationByType(row["素材类型"]);
+  }
+  if (!Number.isFinite(Number(row["九宫格位置"]))) {
+    row["九宫格位置"] = defaultPositionByType(row["素材类型"]);
+  }
+  row["素材宽度占比(%)"] = normalizeSizeRatio(row["素材类型"], row["素材宽度占比(%)"]);
+  clearHoveredMaterial(index);
+}
+
+function onScopeChange(row, index) {
+  if (row["素材库分类"] !== "产品分类素材") {
+    row["产品目录"] = "";
+    row["脚本子文件夹"] = "";
+  }
+  row["素材文件名"] = "";
+  clearHoveredMaterial(index);
+}
+
+function onProductChange(row, index) {
+  row["脚本子文件夹"] = "";
+  row["素材文件名"] = "";
+  clearHoveredMaterial(index);
+}
+
+function onScriptFolderChange(row, index) {
+  row["素材文件名"] = "";
   clearHoveredMaterial(index);
 }
 
@@ -267,45 +444,63 @@ function isImageLike(material) {
   return material.file_type === "image" || material.file_type === "gif";
 }
 
+function openPositionSelector(index) {
+  selectedPositionRowIndex.value = index;
+  positionDialogVisible.value = true;
+}
+
 function addRow() {
   rows.value.push({
-    关键字: "",
+    关键词: "",
+    素材库分类: "定量素材",
+    产品目录: "",
+    脚本子文件夹: "",
     素材文件名: "",
     素材类型: "图片",
     提示音: "随机",
-    "显示时长(秒)": null,
+    "显示时长(秒)": 2,
     "入场偏移(秒)": 0,
-    九宫格位置: 9,
+    九宫格位置: 1,
     透明度: 100,
     是否循环: 0,
     触发规则: "每次触发",
     "素材宽度占比(%)": 25,
+    "视频起始秒(秒)": 0,
+    "视频持续秒(秒)": null,
   });
 }
 
 function normalizeRow(row) {
-  const normalized = {
-    关键字: row["关键字"] ?? "",
+  const materialType = row["素材类型"] ?? "图片";
+  const durationRaw = row["显示时长(秒)"];
+  const scope = row["素材库分类"] || "定量素材";
+  return {
+    关键词: row["关键词"] ?? "",
+    素材库分类: scope,
+    产品目录: scope === "产品分类素材" ? row["产品目录"] ?? "" : "",
+    脚本子文件夹: scope === "产品分类素材" ? row["脚本子文件夹"] ?? "" : "",
     素材文件名: row["素材文件名"] ?? "",
-    素材类型: row["素材类型"] ?? "图片",
+    素材类型: materialType,
     提示音: row["提示音"] ?? "随机",
-    "显示时长(秒)": row["显示时长(秒)"] ?? null,
+    "显示时长(秒)": durationRaw == null || durationRaw === "" ? defaultDurationByType(materialType) : durationRaw,
     "入场偏移(秒)": row["入场偏移(秒)"] ?? 0,
-    九宫格位置: row["九宫格位置"] ?? 9,
+    九宫格位置: normalizePosition(row["九宫格位置"] ?? defaultPositionByType(materialType)),
     透明度: row["透明度"] ?? 100,
     是否循环: row["是否循环"] ?? 0,
     触发规则: row["触发规则"] ?? "每次触发",
-    "素材宽度占比(%)": row["素材宽度占比(%)"] ?? 25,
+    "素材宽度占比(%)": normalizeSizeRatio(materialType, row["素材宽度占比(%)"] ?? (materialType === "短视频" ? 70 : 25)),
+    "视频起始秒(秒)": row["视频起始秒(秒)"] ?? 0,
+    "视频持续秒(秒)": row["视频持续秒(秒)"] ?? null,
   };
-  return normalized;
 }
 
 async function loadMaterialPools() {
-  const [images, gifs, videos, audios] = await Promise.all([
+  const [images, gifs, videos, audios, tree] = await Promise.all([
     listMaterials({ file_type: "image" }),
     listMaterials({ file_type: "gif" }),
     listMaterials({ file_type: "video" }),
     listMaterials({ file_type: "audio" }),
+    getMaterialTree(),
   ]);
 
   materialPools.value = {
@@ -314,6 +509,7 @@ async function loadMaterialPools() {
     video: sortByFileName(videos),
   };
   audioMaterials.value = sortByFileName(audios);
+  materialTree.value = tree;
 }
 
 function stopPreview() {
@@ -371,11 +567,14 @@ onBeforeUnmount(() => {
 });
 
 async function save() {
-  if (!templateName.value) return;
+  if (!templateName.value) {
+    ElMessage.warning("请先填写模板名称");
+    return;
+  }
   const payload = {
     template_name: templateName.value,
     description: description.value || null,
-    config_content: rows.value,
+    config_content: rows.value.map(normalizeRow),
   };
   if (isEdit.value) {
     await store.updateTemplate(templateId.value, payload);
