@@ -43,44 +43,63 @@ class MatchEvent:
     sound_effect_path: str | None = None
     video_start_seconds: float = 0.0
     video_duration_seconds: float | None = None
+    layer_rank: int | None = None
 
 
-def _build_subtitle_winner_map(
+def _build_subtitle_layer_rank_map(
     subtitles: list[dict[str, Any]],
     config: list[dict[str, Any]],
     collision_priority_by_subtitle: dict[int, list[str]] | None = None,
-) -> dict[int, str]:
-    indexed_keywords: list[tuple[int, str]] = []
+) -> dict[int, dict[str, int]]:
+    keyword_default_order: dict[str, int] = {}
     for order, rule in enumerate(config):
         if not isinstance(rule, dict):
             continue
-        keyword_raw = rule.get("关键词")
+        keyword_raw = rule.get("关键词", rule.get("关键字"))
         keyword = keyword_raw if isinstance(keyword_raw, str) else str(keyword_raw or "")
         keyword = keyword.strip()
         if keyword:
-            indexed_keywords.append((order, keyword))
+            keyword_default_order.setdefault(keyword, order)
 
-    winner_map: dict[int, str] = {}
+    subtitle_layer_rank_map: dict[int, dict[str, int]] = {}
     for subtitle in subtitles:
         subtitle_index = int(subtitle.get("index", 0))
         subtitle_text = str(subtitle.get("text", "") or "")
-        matched = [(order, keyword) for order, keyword in indexed_keywords if keyword in subtitle_text]
-        if len(matched) <= 1:
+        matched_keywords = [
+            keyword for keyword in keyword_default_order.keys() if keyword in subtitle_text
+        ]
+        if len(matched_keywords) <= 1:
             continue
+
+        default_ordered = sorted(
+            matched_keywords,
+            key=lambda item: (-len(item), keyword_default_order.get(item, 10**9)),
+        )
+        ordered_keywords = list(default_ordered)
+
         if collision_priority_by_subtitle:
             override_order = collision_priority_by_subtitle.get(subtitle_index, [])
             if override_order:
-                matched_keywords = {keyword for _, keyword in matched}
-                winner_by_override = next(
-                    (keyword for keyword in override_order if keyword in matched_keywords),
-                    None,
-                )
-                if winner_by_override:
-                    winner_map[subtitle_index] = winner_by_override
-                    continue
-        matched.sort(key=lambda item: (-len(item[1]), item[0]))
-        winner_map[subtitle_index] = matched[0][1]
-    return winner_map
+                normalized_override = [
+                    str(keyword).strip()
+                    for keyword in override_order
+                    if str(keyword).strip()
+                ]
+                matched_set = set(matched_keywords)
+                override_hits = [
+                    keyword for keyword in normalized_override if keyword in matched_set
+                ]
+                if override_hits:
+                    ordered_keywords = override_hits + [
+                        keyword
+                        for keyword in default_ordered
+                        if keyword not in set(override_hits)
+                    ]
+
+        subtitle_layer_rank_map[subtitle_index] = {
+            keyword: idx for idx, keyword in enumerate(ordered_keywords)
+        }
+    return subtitle_layer_rank_map
 
 
 def _default_grid_position(material_type: str) -> int:
@@ -177,14 +196,14 @@ def build_match_events(
     collision_priority_by_subtitle: dict[int, list[str]] | None = None,
 ) -> list[MatchEvent]:
     events: list[MatchEvent] = []
-    subtitle_winner_map = _build_subtitle_winner_map(
+    subtitle_layer_rank_map = _build_subtitle_layer_rank_map(
         subtitles,
         config,
         collision_priority_by_subtitle=collision_priority_by_subtitle,
     )
 
     for item in config:
-        keyword = str(item.get("关键词", "")).strip()
+        keyword = str(item.get("关键词", item.get("关键字", ""))).strip()
         material_file_raw = str(item.get("素材文件名", "")).strip()
         material_file = Path(material_file_raw.replace("\\", "/")).name
         material_type = str(item.get("素材类型", "")).strip()
@@ -248,34 +267,10 @@ def build_match_events(
 
             matched = True
             subtitle_index = int(sub.get("index", 0))
-            winner_keyword = subtitle_winner_map.get(subtitle_index)
-            if winner_keyword and winner_keyword != keyword:
-                events.append(
-                    MatchEvent(
-                        keyword=keyword,
-                        subtitle_index=subtitle_index,
-                        subtitle_text=str(sub.get("text", "")),
-                        material_file_name=material_file,
-                        material_type=material_type,
-                        position=position,
-                        opacity=opacity,
-                        loop=loop,
-                        trigger_rule=trigger_rule,
-                        size_ratio_percent=size_ratio_percent,
-                        start_time=max(0.0, float(sub.get("start_seconds", 0)) + offset),
-                        end_time=max(0.0, float(sub.get("end_seconds", 0)) + offset),
-                        status="failed",
-                        reason=f"被长词覆盖: {winner_keyword}",
-                        material_path=material_path,
-                        cue_sound_config=cue_sound_config,
-                        sound_effect_status="未播放",
-                        video_start_seconds=video_start_seconds,
-                        video_duration_seconds=video_duration_seconds,
-                    )
-                )
-                if trigger_rule == "首次触发":
-                    break
-                continue
+            layer_rank = None
+            rank_map = subtitle_layer_rank_map.get(subtitle_index)
+            if rank_map and keyword in rank_map:
+                layer_rank = int(rank_map[keyword])
 
             start_time = float(sub.get("start_seconds", 0)) + offset
             base_end = float(sub.get("end_seconds", 0)) + offset
@@ -314,6 +309,7 @@ def build_match_events(
                     sound_effect_status="未播放",
                     video_start_seconds=video_start_seconds,
                     video_duration_seconds=video_duration_seconds,
+                    layer_rank=layer_rank,
                 )
             )
 
@@ -342,6 +338,7 @@ def build_match_events(
                     sound_effect_status="未播放",
                     video_start_seconds=video_start_seconds,
                     video_duration_seconds=video_duration_seconds,
+                    layer_rank=None,
                 )
             )
 

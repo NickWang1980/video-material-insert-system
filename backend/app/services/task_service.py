@@ -111,7 +111,7 @@ def merge_templates_and_validate_keywords(
             if not isinstance(rule, dict):
                 continue
 
-            keyword_value = rule.get("关键字")
+            keyword_value = rule.get("关键词", rule.get("关键字"))
             keyword = keyword_value if isinstance(keyword_value, str) else str(keyword_value or "")
 
             exists = keyword_to_templates.get(keyword)
@@ -179,7 +179,7 @@ def detect_keyword_collision_warnings(
     for index, rule in enumerate(merged_config):
         if not isinstance(rule, dict):
             continue
-        keyword_raw = rule.get("关键字")
+        keyword_raw = rule.get("关键词", rule.get("关键字"))
         keyword = keyword_raw if isinstance(keyword_raw, str) else str(keyword_raw or "")
         keyword = keyword.strip()
         if keyword:

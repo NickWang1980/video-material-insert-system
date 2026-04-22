@@ -42,7 +42,7 @@ class MaterialResponse(BaseModel):
     file_type: str
     file_size: int
     file_path: str
-    library_kind: str = "general"
+    library_kind: str = "unfiled"
     product_id: int | None = None
     script_folder_id: int | None = None
     product_name: str | None = None
@@ -71,7 +71,6 @@ class MaterialTreeProductNode(BaseModel):
 
 
 class MaterialTreeResponse(BaseModel):
-    general_label: str = "定量素材"
     unfiled_label: str = "未归档"
     product_label: str = "产品分类素材"
     products: list[MaterialTreeProductNode]

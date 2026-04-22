@@ -229,7 +229,7 @@ const keywordRuleMap = computed(() => {
     if (!detail) return;
     const rules = Array.isArray(detail.config_content) ? detail.config_content : [];
     rules.forEach((rule) => {
-      const keyword = String(rule?.["关键字"] || "").trim();
+        const keyword = String(rule?.["关键词"] || rule?.["关键字"] || "").trim();
       if (!keyword) return;
       if (result.has(keyword)) return;
       result.set(keyword, {
@@ -374,7 +374,7 @@ async function checkConflicts() {
       const templateName = template.template_name;
       const rules = Array.isArray(template.config_content) ? template.config_content : [];
       rules.forEach((rule) => {
-        const keywordRaw = rule?.["关键字"];
+        const keywordRaw = rule?.["关键词"] ?? rule?.["关键字"];
         const keyword = typeof keywordRaw === "string" ? keywordRaw : String(keywordRaw ?? "");
         if (!keywordMap.has(keyword)) {
           keywordMap.set(keyword, [templateName]);

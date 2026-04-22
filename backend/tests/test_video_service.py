@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from backend.app.services.material_service import MatchEvent
-from backend.app.services.video_service import VideoProbe, build_ffmpeg_command, grid_xy_expr
+from backend.app.services.video_service import (
+    VideoProbe,
+    _apply_collision_layer_order,
+    build_ffmpeg_command,
+    grid_xy_expr,
+)
 
 
 def test_grid_xy_expr():
@@ -108,3 +113,17 @@ def test_build_ffmpeg_command_short_video_clip_params(monkeypatch):
     )
     cmd_str = " ".join(cmd)
     assert "trim=start=2.0:duration=4.0" in cmd_str
+
+
+def test_apply_collision_layer_order_high_layer_last():
+    e_top = _event(None)
+    e_mid = _event(None)
+    e_low = _event(None)
+
+    e_top = MatchEvent(**{**e_top.__dict__, "subtitle_index": 5, "layer_rank": 0, "keyword": "A"})
+    e_mid = MatchEvent(**{**e_mid.__dict__, "subtitle_index": 5, "layer_rank": 1, "keyword": "B"})
+    e_low = MatchEvent(**{**e_low.__dict__, "subtitle_index": 5, "layer_rank": 2, "keyword": "C"})
+
+    labels = [(e_top, "ov_top"), (e_mid, "ov_mid"), (e_low, "ov_low")]
+    ordered = _apply_collision_layer_order(labels)
+    assert [item[0].keyword for item in ordered] == ["C", "B", "A"]

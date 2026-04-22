@@ -52,7 +52,7 @@ def test_build_match_events_keyword_missing_material():
     ]
     events = build_match_events(db, subtitles, config)
     assert events[0].status == "failed"
-    assert events[0].reason in ("素材不存在", "素材文件不存在")
+    assert events[0].reason in ("素材不存在", "素材文件不存在", "定量素材库中素材不存在")
 
 
 def test_build_match_events_default_for_image(tmp_path):
@@ -87,3 +87,29 @@ def test_build_match_events_video_size_ratio_and_video_params(tmp_path):
     assert events[0].cue_sound_config == "ding.mp3"
     assert events[0].video_start_seconds == 2.0
     assert events[0].video_duration_seconds == 4.0
+
+
+def test_build_match_events_collision_group_overlay_all(tmp_path):
+    files = ["happy_home.png", "happy.png", "home.png"]
+    materials = {}
+    for file_name in files:
+        path = tmp_path / file_name
+        path.write_bytes(b"png")
+        materials[file_name] = _Material(file_name=file_name, file_path=Path(path).as_posix())
+
+    db = _DB(materials=materials)
+    subtitles = [{"index": 1, "text": "快乐老家", "start_seconds": 1.0, "end_seconds": 2.0}]
+    config = [
+        {"关键词": "快乐老家", "素材文件名": "happy_home.png", "素材类型": "图片"},
+        {"关键词": "快乐", "素材文件名": "happy.png", "素材类型": "图片"},
+        {"关键词": "老家", "素材文件名": "home.png", "素材类型": "图片"},
+    ]
+
+    events = build_match_events(db, subtitles, config)
+    success_events = [event for event in events if event.status == "success"]
+    assert len(success_events) == 3
+
+    rank_map = {event.keyword: event.layer_rank for event in success_events}
+    assert rank_map["快乐老家"] == 0
+    assert rank_map["快乐"] == 1
+    assert rank_map["老家"] == 2

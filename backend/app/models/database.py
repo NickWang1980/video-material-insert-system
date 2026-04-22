@@ -39,7 +39,7 @@ def _ensure_material_relationships(conn) -> None:
     ).fetchall()
     for row in rows:
         material_id = int(row[0])
-        library_kind = str(row[1] or "general").strip().lower()
+        library_kind = str(row[1] or "unfiled").strip().lower()
         product_name = str(row[2] or "").strip()
         script_folder = str(row[3] or "").strip()
 
@@ -47,7 +47,7 @@ def _ensure_material_relationships(conn) -> None:
             conn.execute(
                 text(
                     "UPDATE materials "
-                    "SET library_kind='general', product_id=NULL, script_folder_id=NULL "
+                    "SET library_kind='unfiled', product_id=NULL, script_folder_id=NULL "
                     "WHERE id=:id"
                 ),
                 {"id": material_id},
@@ -176,7 +176,7 @@ def _rebuild_materials_table(conn) -> None:
             "file_type VARCHAR(20) NOT NULL, "
             "file_size INTEGER NOT NULL, "
             "file_path VARCHAR(512) NOT NULL, "
-            "library_kind VARCHAR(20) DEFAULT 'general', "
+            "library_kind VARCHAR(20) DEFAULT 'unfiled', "
             "product_name VARCHAR(255), "
             "script_folder VARCHAR(255), "
             "product_id INTEGER, "
@@ -194,7 +194,7 @@ def _rebuild_materials_table(conn) -> None:
             ") "
             "SELECT "
             "id, file_name, file_type, file_size, file_path, "
-            "COALESCE(library_kind, 'general'), product_name, script_folder, "
+            "COALESCE(library_kind, 'unfiled'), product_name, script_folder, "
             "product_id, script_folder_id, audio_removed, created_at "
             "FROM materials"
         )
@@ -221,8 +221,8 @@ def _ensure_material_indexes(conn) -> None:
     )
     conn.execute(
         text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_material_general_file_name "
-            "ON materials(file_name) WHERE library_kind='general'"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_material_unfiled_file_name "
+            "ON materials(file_name) WHERE library_kind='unfiled'"
         )
     )
     conn.execute(
@@ -303,7 +303,7 @@ def _ensure_schema_compatibility() -> None:
             conn.execute(text("ALTER TABLE materials ADD COLUMN audio_removed INTEGER"))
         if "library_kind" not in material_column_names:
             conn.execute(
-                text("ALTER TABLE materials ADD COLUMN library_kind TEXT DEFAULT 'general'")
+                text("ALTER TABLE materials ADD COLUMN library_kind TEXT DEFAULT 'unfiled'")
             )
         if "product_name" not in material_column_names:
             conn.execute(text("ALTER TABLE materials ADD COLUMN product_name TEXT"))
@@ -315,8 +315,14 @@ def _ensure_schema_compatibility() -> None:
             conn.execute(text("ALTER TABLE materials ADD COLUMN script_folder_id INTEGER"))
         conn.execute(
             text(
-                "UPDATE materials SET library_kind='general' "
+                "UPDATE materials SET library_kind='unfiled' "
                 "WHERE library_kind IS NULL OR TRIM(library_kind)=''"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE materials SET library_kind='unfiled' "
+                "WHERE library_kind='general'"
             )
         )
         conn.execute(

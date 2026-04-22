@@ -56,6 +56,8 @@ def _validate_library_kind(value: str | None) -> str:
     normalized = (value or LIBRARY_KIND_UNFILED).strip().lower()
     if normalized not in VALID_LIBRARY_KINDS:
         raise HTTPException(status_code=400, detail="素材库分类仅支持 general/product/unfiled")
+    if normalized == LIBRARY_KIND_GENERAL:
+        return LIBRARY_KIND_UNFILED
     return normalized
 
 
@@ -126,7 +128,11 @@ def _serialize_material(db: Session, material: Material) -> MaterialResponse:
         file_type=material.file_type,
         file_size=material.file_size,
         file_path=material.file_path,
-        library_kind=material.library_kind,
+        library_kind=(
+            LIBRARY_KIND_UNFILED
+            if material.library_kind == LIBRARY_KIND_GENERAL
+            else material.library_kind
+        ),
         product_id=material.product_id,
         script_folder_id=material.script_folder_id,
         product_name=product_name,
@@ -505,7 +511,7 @@ async def file_material(
         raise HTTPException(status_code=400, detail="目标目录类型仅支持 general/unfiled/script")
 
     if target_type == LIBRARY_KIND_GENERAL:
-        material.library_kind = LIBRARY_KIND_GENERAL
+        material.library_kind = LIBRARY_KIND_UNFILED
         material.product_id = None
         material.script_folder_id = None
         material.product_name = None
@@ -666,6 +672,8 @@ async def list_materials(
                 )
                 .distinct()
             )
+        elif normalized_kind == LIBRARY_KIND_UNFILED:
+            query = query.filter(Material.library_kind.in_([LIBRARY_KIND_UNFILED, LIBRARY_KIND_GENERAL]))
         else:
             query = query.filter(Material.library_kind == normalized_kind)
 

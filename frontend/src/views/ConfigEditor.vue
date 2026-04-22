@@ -23,31 +23,32 @@
         </div>
       </div>
 
-      <el-table :data="rows" stripe style="width: 100%">
-        <el-table-column label="关键词" width="160">
+      <el-table :data="rows" stripe class="compact-config-table" style="width: 100%" table-layout="fixed">
+        <el-table-column label="关键词" width="130">
           <template #default="{ row }">
             <el-input v-model="row['关键词']" />
           </template>
         </el-table-column>
 
-        <el-table-column label="素材目录" width="360">
+        <el-table-column label="素材绑定" min-width="430">
           <template #default="{ row, $index }">
             <div class="space-y-2">
-              <el-select
-                v-model="row['素材库分类']"
-                style="width: 120px"
-                @change="onScopeChange(row, $index)"
-              >
-                <el-option label="定量素材" value="定量素材" />
-                <el-option label="未归档" value="未归档" />
-                <el-option label="产品分类素材" value="产品分类素材" />
-              </el-select>
-              <div class="flex gap-2" v-if="row['素材库分类'] === '产品分类素材'">
+              <div class="flex items-center gap-1 flex-wrap">
                 <el-select
+                  v-model="row['素材库分类']"
+                  style="width: 108px"
+                  @change="onScopeChange(row, $index)"
+                >
+                  <el-option label="定量素材" value="定量素材" />
+                  <el-option label="未归档" value="未归档" />
+                  <el-option label="产品分类素材" value="产品分类素材" />
+                </el-select>
+                <el-select
+                  v-if="row['素材库分类'] === '产品分类素材'"
                   v-model="row['产品目录']"
-                  style="width: 110px"
+                  style="width: 96px"
                   filterable
-                  placeholder="产品目录"
+                  placeholder="产品"
                   @change="onProductChange(row, $index)"
                 >
                   <el-option
@@ -58,10 +59,11 @@
                   />
                 </el-select>
                 <el-select
+                  v-if="row['素材库分类'] === '产品分类素材'"
                   v-model="row['脚本子文件夹']"
-                  style="width: 120px"
+                  style="width: 110px"
                   filterable
-                  placeholder="脚本子文件夹"
+                  placeholder="子目录"
                   @change="onScriptFolderChange(row, $index)"
                 >
                   <el-option
@@ -72,30 +74,23 @@
                   />
                 </el-select>
               </div>
-            </div>
-          </template>
-        </el-table-column>
 
-        <el-table-column label="素材类型 / 素材文件名" width="360">
-          <template #default="{ row, $index }">
-            <div class="space-y-2">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1 flex-wrap">
                 <el-select
                   v-model="row['素材类型']"
-                  style="width: 96px"
+                  style="width: 82px"
                   @change="onMaterialTypeChange(row, $index)"
                 >
                   <el-option label="图片" value="图片" />
                   <el-option label="GIF" value="GIF" />
                   <el-option label="短视频" value="短视频" />
                 </el-select>
-
                 <el-select
                   v-model="row['素材文件名']"
-                  style="width: 220px"
+                  style="width: 130px"
                   filterable
                   :disabled="materialOptionsByRow(row).length === 0"
-                  :placeholder="materialOptionsByRow(row).length ? '请选择素材文件名' : '当前目录下暂无该类型素材'"
+                  :placeholder="materialOptionsByRow(row).length ? '素材文件名' : '暂无素材'"
                   @visible-change="(visible) => onMaterialSelectVisibleChange($index, visible)"
                 >
                   <el-option
@@ -109,140 +104,107 @@
                     </div>
                   </el-option>
                 </el-select>
-              </div>
+                <el-select v-model="row['提示音']" style="width: 96px">
+                  <el-option label="随机" value="随机" />
+                  <el-option
+                    v-for="audio in audioMaterials"
+                    :key="audio.id"
+                    :label="audio.file_name"
+                    :value="audio.file_name"
+                  />
+                </el-select>
+                <el-button size="small" @click="previewCueSound(row)" :disabled="!canPreviewCueSound(row)">
+                  试听
+                </el-button>
 
-              <div v-if="previewMaterialForRow(row, $index)" class="rounded-lg border border-gray-200 bg-gray-50 p-2">
-                <div class="text-xs text-gray-600 truncate mb-1">
-                  预览：{{ previewMaterialForRow(row, $index).file_name }}
+                <div
+                  v-if="previewMaterialForRow(row, $index)"
+                  class="rounded border border-gray-200 bg-gray-50 p-1 flex items-center justify-center"
+                >
+                  <img
+                    v-if="isImageLike(previewMaterialForRow(row, $index))"
+                    :src="previewUrl(previewMaterialForRow(row, $index).id)"
+                    class="w-6 h-6 rounded object-cover"
+                    alt="material-preview"
+                  />
+                  <video
+                    v-else
+                    :src="previewUrl(previewMaterialForRow(row, $index).id)"
+                    class="w-6 h-6 rounded object-cover"
+                    muted
+                    loop
+                    autoplay
+                    playsinline
+                  ></video>
                 </div>
-                <img
-                  v-if="isImageLike(previewMaterialForRow(row, $index))"
-                  :src="previewUrl(previewMaterialForRow(row, $index).id)"
-                  class="w-24 h-24 rounded object-cover border border-gray-200"
-                  alt="material-preview"
-                />
-                <video
-                  v-else
-                  :src="previewUrl(previewMaterialForRow(row, $index).id)"
-                  class="w-24 h-24 rounded object-cover border border-gray-200"
-                  muted
-                  loop
-                  autoplay
-                  playsinline
-                ></video>
               </div>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="提示音" width="300">
+        <el-table-column label="时间参数" min-width="260">
           <template #default="{ row }">
-            <div class="flex items-center gap-2">
-              <el-select v-model="row['提示音']" style="width: 190px">
-                <el-option label="随机" value="随机" />
-                <el-option
-                  v-for="audio in audioMaterials"
-                  :key="audio.id"
-                  :label="audio.file_name"
-                  :value="audio.file_name"
-                />
-              </el-select>
-              <el-button size="small" @click="previewCueSound(row)" :disabled="!canPreviewCueSound(row)">
-                试听
-              </el-button>
+            <div class="grid grid-cols-2 gap-1">
+              <el-input-number
+                v-model="row['显示时长(秒)']"
+                :min="0"
+                :step="0.1"
+                placeholder="显示"
+              />
+              <el-input-number
+                v-model="row['入场偏移(秒)']"
+                :step="0.1"
+                placeholder="偏移"
+              />
+              <el-input-number
+                v-model="row['视频起始秒(秒)']"
+                :min="0"
+                :step="0.1"
+                :disabled="row['素材类型'] !== '短视频'"
+                placeholder="起始"
+              />
+              <el-input-number
+                v-model="row['视频持续秒(秒)']"
+                :min="0.1"
+                :step="0.1"
+                :disabled="row['素材类型'] !== '短视频'"
+                placeholder="持续"
+              />
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="显示时长(秒)" width="130">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row['显示时长(秒)']"
-              :min="0"
-              :step="0.1"
-              :placeholder="row['素材类型'] === '短视频' ? '默认字幕时长' : '默认2秒'"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="视频起始秒(秒)" width="140">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row['视频起始秒(秒)']"
-              :min="0"
-              :step="0.1"
-              :disabled="row['素材类型'] !== '短视频'"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="视频持续秒(秒)" width="140">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row['视频持续秒(秒)']"
-              :min="0.1"
-              :step="0.1"
-              :disabled="row['素材类型'] !== '短视频'"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="入场偏移(秒)" width="130">
-          <template #default="{ row }">
-            <el-input-number v-model="row['入场偏移(秒)']" :step="0.1" />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="九宫格位置" width="140">
+        <el-table-column label="显示参数" min-width="300">
           <template #default="{ row, $index }">
-            <el-button size="small" @click="openPositionSelector($index)">
-              位置 {{ normalizePosition(row['九宫格位置']) }}
-            </el-button>
+            <div class="grid grid-cols-2 gap-1 items-center">
+              <el-button size="small" @click="openPositionSelector($index)">
+                位置 {{ normalizePosition(row['九宫格位置']) }}
+              </el-button>
+              <el-input-number v-model="row['透明度']" :min="0" :max="100" />
+              <el-switch v-model="row['是否循环']" :active-value="1" :inactive-value="0" />
+              <el-select v-model="row['触发规则']">
+                <el-option label="首次触发" value="首次触发" />
+                <el-option label="每次触发" value="每次触发" />
+              </el-select>
+              <el-select
+                v-if="row['素材类型'] === '短视频'"
+                v-model="row['素材宽度占比(%)']"
+              >
+                <el-option label="满屏 100%" :value="100" />
+                <el-option label="大屏 70%" :value="70" />
+              </el-select>
+              <el-input-number
+                v-else
+                v-model="row['素材宽度占比(%)']"
+                :min="5"
+                :max="100"
+                :step="1"
+              />
+            </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="透明度" width="110">
-          <template #default="{ row }">
-            <el-input-number v-model="row['透明度']" :min="0" :max="100" />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="循环" width="90">
-          <template #default="{ row }">
-            <el-switch v-model="row['是否循环']" :active-value="1" :inactive-value="0" />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="触发规则" width="120">
-          <template #default="{ row }">
-            <el-select v-model="row['触发规则']" style="width: 100%">
-              <el-option label="首次触发" value="首次触发" />
-              <el-option label="每次触发" value="每次触发" />
-            </el-select>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="素材大小" width="160">
-          <template #default="{ row }">
-            <el-select
-              v-if="row['素材类型'] === '短视频'"
-              v-model="row['素材宽度占比(%)']"
-              style="width: 120px"
-            >
-              <el-option label="满屏 100%" :value="100" />
-              <el-option label="大屏 70%" :value="70" />
-            </el-select>
-            <el-input-number
-              v-else
-              v-model="row['素材宽度占比(%)']"
-              :min="5"
-              :max="100"
-              :step="1"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="70">
           <template #default="{ $index }">
             <el-button type="danger" size="small" @click="rows.splice($index, 1)">删</el-button>
           </template>
@@ -595,3 +557,16 @@ async function onImport(file) {
   }
 }
 </script>
+
+<style scoped>
+:deep(.compact-config-table .cell) {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+:deep(.compact-config-table .el-input-number),
+:deep(.compact-config-table .el-select),
+:deep(.compact-config-table .el-input) {
+  width: 100%;
+}
+</style>

@@ -66,7 +66,7 @@
         type="warning"
         show-icon
         :closable="false"
-        title="任务创建时检测到近距离关键词冲突（已按长词优先处理）"
+        title="任务创建时检测到关键词冲突（按层级顺序叠加）"
       >
         <div class="text-xs mt-1 space-y-2 max-h-40 overflow-auto pr-1">
           <div
@@ -77,7 +77,11 @@
             <div>字幕行 #{{ item.subtitle_index }}（{{ item.start }} - {{ item.end }}）</div>
             <div class="truncate">文本：{{ item.text }}</div>
             <div>命中：{{ item.matched_keywords.join(" / ") }}</div>
-            <div>保留：{{ item.winner_keyword }}；抑制：{{ item.suppressed_keywords.join(" / ") }}</div>
+            <div>
+              默认层级（上→下）：{{
+                [item.winner_keyword, ...(item.suppressed_keywords || [])].filter(Boolean).join(" / ")
+              }}
+            </div>
           </div>
         </div>
       </el-alert>

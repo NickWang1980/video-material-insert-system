@@ -5,7 +5,6 @@ export const useMaterialStore = defineStore("material", {
   state: () => ({
     items: [],
     tree: {
-      general_label: "定量素材",
       unfiled_label: "未归档",
       product_label: "产品分类素材",
       products: [],

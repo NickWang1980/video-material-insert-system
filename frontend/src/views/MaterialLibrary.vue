@@ -13,8 +13,10 @@
       >
         <template #default="{ data }">
           <div
-            class="w-full min-h-[28px] flex items-center"
-            @dragover.prevent
+            class="w-full min-h-[28px] flex items-center rounded px-1 transition-colors"
+            :class="{ 'material-folder-drop-active': dragOverNodeKey === data.key }"
+            @dragover.prevent="onDragOverNode(data)"
+            @dragleave="onDragLeaveNode(data)"
             @drop.prevent="onDropToNode(data)"
           >
             <span class="text-sm">{{ data.label }}</span>
@@ -58,6 +60,15 @@
           </el-select>
           <el-segmented v-model="viewMode" :options="viewModeOptions" />
           <el-button @click="reload">刷新</el-button>
+          <el-button @click="toggleSelectMode">{{ selecting ? "取消选择" : "选择" }}</el-button>
+          <el-button
+            v-if="selecting"
+            @click="toggleSelectAllOrInverse"
+            :disabled="store.items.length === 0"
+          >
+            {{ allItemsSelected ? "反选" : "全选" }}
+          </el-button>
+          <span v-if="selecting" class="text-xs text-gray-500">已选 {{ selectedIds.length }}</span>
         </div>
       </div>
 
@@ -71,7 +82,7 @@
         v-if="!canUpload"
         type="warning"
         :closable="false"
-        title="请先选择“定量素材 / 未归档 / 脚本子文件夹”后再上传素材。"
+        title="请先选择“未归档 / 脚本子文件夹”后再上传素材。"
       />
 
       <div
@@ -82,10 +93,19 @@
         <div
           v-for="material in store.items"
           :key="material.id"
-          class="group rounded-xl border border-gray-200 overflow-hidden bg-white"
+          class="group rounded-xl border border-gray-200 overflow-hidden bg-white relative material-card-hoverable"
+          :class="{ 'material-card-dragging': isDraggingItem(material.id) }"
           draggable="true"
-          @dragstart="onDragStart(material)"
+          @dragstart="(event) => onDragStart(material, event)"
+          @dragend="onDragEnd"
         >
+          <div v-if="selecting" class="absolute top-2 left-2 z-10 bg-white/90 rounded px-1">
+            <el-checkbox
+              :model-value="isSelected(material.id)"
+              @change="(checked) => onToggleItemSelect(material.id, checked)"
+              @click.stop
+            />
+          </div>
           <div
             class="aspect-square bg-gray-100 flex items-center justify-center cursor-pointer"
             @click="openPreview(material)"
@@ -122,13 +142,23 @@
         style="width: 100%"
         v-loading="store.loading"
       >
+        <el-table-column v-if="selecting" label="选择" width="80">
+          <template #default="{ row }">
+            <el-checkbox
+              :model-value="isSelected(row.id)"
+              @change="(checked) => onToggleItemSelect(row.id, checked)"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="预览" width="120">
           <template #default="{ row }">
             <div
               class="w-20 h-12 rounded overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
               @click="openPreview(row)"
+              :class="{ 'material-card-dragging': isDraggingItem(row.id) }"
               draggable="true"
-              @dragstart="onDragStart(row)"
+              @dragstart="(event) => onDragStart(row, event)"
+              @dragend="onDragEnd"
             >
               <img v-if="isImageLike(row)" :src="store.previewUrl(row.id)" class="w-full h-full object-cover" />
               <video
@@ -214,14 +244,18 @@ const viewModeOptions = [
 ];
 const fileType = ref("");
 
-const selectedNode = ref({ key: "general", type: "general", label: "定量素材" });
-const defaultExpandedKeys = ref(["general", "unfiled", "product_root"]);
+const selectedNode = ref({ key: "unfiled", type: "unfiled", label: "未归档" });
+const defaultExpandedKeys = ref(["unfiled", "product_root"]);
 const draggingMaterial = ref(null);
 
 let uploadTimer = null;
 const pendingFiles = ref([]);
 const previewVisible = ref(false);
 const previewMaterial = ref(null);
+const selecting = ref(false);
+const selectedIds = ref([]);
+const draggingMaterialIds = ref([]);
+const dragOverNodeKey = ref("");
 
 const treeData = computed(() => {
   const products = (store.tree?.products || []).map((product) => ({
@@ -241,11 +275,6 @@ const treeData = computed(() => {
 
   return [
     {
-      key: "general",
-      type: "general",
-      label: store.tree?.general_label || "定量素材",
-    },
-    {
       key: "unfiled",
       type: "unfiled",
       label: store.tree?.unfiled_label || "未归档",
@@ -259,15 +288,18 @@ const treeData = computed(() => {
   ];
 });
 
-const selectedNodeType = computed(() => selectedNode.value?.type || "general");
+const selectedNodeType = computed(() => selectedNode.value?.type || "unfiled");
+const allItemsSelected = computed(() => {
+  if (store.items.length === 0) return false;
+  return store.items.every((item) => selectedIds.value.includes(item.id));
+});
 const canUpload = computed(() => {
-  return ["general", "unfiled", "script"].includes(selectedNodeType.value);
+  return ["unfiled", "script"].includes(selectedNodeType.value);
 });
 
 const currentPathLabel = computed(() => {
   const node = selectedNode.value;
   if (!node) return "-";
-  if (node.type === "general") return "定量素材";
   if (node.type === "unfiled") return "未归档";
   if (node.type === "product_root") return "产品分类素材";
   if (node.type === "product") return `产品分类素材 / ${node.label}`;
@@ -278,7 +310,7 @@ const currentPathLabel = computed(() => {
 onMounted(async () => {
   await reloadTree();
   await nextTick();
-  treeRef.value?.setCurrentKey("general");
+  treeRef.value?.setCurrentKey("unfiled");
   await reload();
 });
 
@@ -290,7 +322,6 @@ function currentFilters() {
   const node = selectedNode.value;
   const base = { file_type: fileType.value };
   if (!node) return base;
-  if (node.type === "general") return { ...base, library_kind: "general" };
   if (node.type === "unfiled") return { ...base, library_kind: "unfiled" };
   if (node.type === "script") {
     return {
@@ -318,6 +349,8 @@ async function reloadTree() {
 async function reload() {
   try {
     await store.fetchList(currentFilters());
+    const visibleIds = new Set(store.items.map((item) => item.id));
+    selectedIds.value = selectedIds.value.filter((id) => visibleIds.has(id));
   } catch (error) {
     ElMessage.error(error.message || "获取素材列表失败");
   }
@@ -328,28 +361,174 @@ function onNodeClick(node) {
   reload();
 }
 
-function onDragStart(material) {
+function resolveDraggingIds(materialId) {
+  const visibleIds = new Set(store.items.map((item) => item.id));
+  const selectedVisibleIds = selectedIds.value.filter((id) => visibleIds.has(id));
+  if (selecting.value && selectedVisibleIds.length > 0) {
+    return selectedVisibleIds;
+  }
+  return [Number(materialId)];
+}
+
+function createDragGhost(ids) {
+  if (!ids.length) return null;
+  const materials = store.items.filter((item) => ids.includes(item.id));
+  const ghost = document.createElement("div");
+  ghost.style.position = "fixed";
+  ghost.style.top = "-9999px";
+  ghost.style.left = "-9999px";
+  ghost.style.background = "rgba(17, 24, 39, 0.92)";
+  ghost.style.color = "#fff";
+  ghost.style.borderRadius = "10px";
+  ghost.style.padding = "8px 10px";
+  ghost.style.minWidth = "180px";
+  ghost.style.maxWidth = "260px";
+  ghost.style.boxShadow = "0 10px 24px rgba(0,0,0,0.25)";
+  ghost.style.fontSize = "12px";
+  ghost.style.lineHeight = "1.4";
+
+  const title = document.createElement("div");
+  title.style.fontWeight = "600";
+  title.style.marginBottom = "6px";
+  title.innerText = `拖拽 ${ids.length} 个素材`;
+  ghost.appendChild(title);
+
+  materials.slice(0, 4).forEach((item) => {
+    const row = document.createElement("div");
+    row.style.whiteSpace = "nowrap";
+    row.style.overflow = "hidden";
+    row.style.textOverflow = "ellipsis";
+    row.style.opacity = "0.95";
+    row.innerText = `• ${item.file_name}`;
+    ghost.appendChild(row);
+  });
+
+  if (materials.length > 4) {
+    const more = document.createElement("div");
+    more.style.marginTop = "4px";
+    more.style.opacity = "0.85";
+    more.innerText = `…还有 ${materials.length - 4} 个`;
+    ghost.appendChild(more);
+  }
+
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
+function onDragStart(material, event) {
+  const ids = resolveDraggingIds(material.id);
+  draggingMaterialIds.value = ids;
   draggingMaterial.value = material;
+
+  if (event?.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", ids.join(","));
+    const ghost = createDragGhost(ids);
+    if (ghost) {
+      event.dataTransfer.setDragImage(ghost, 16, 16);
+      setTimeout(() => {
+        ghost.remove();
+      }, 0);
+    }
+  }
+}
+
+function onDragEnd() {
+  draggingMaterial.value = null;
+  draggingMaterialIds.value = [];
+  dragOverNodeKey.value = "";
+}
+
+function isDraggingItem(materialId) {
+  return draggingMaterialIds.value.includes(Number(materialId));
+}
+
+function onDragOverNode(node) {
+  if (draggingMaterialIds.value.length === 0) return;
+  dragOverNodeKey.value = node.key;
+}
+
+function onDragLeaveNode(node) {
+  if (dragOverNodeKey.value === node.key) {
+    dragOverNodeKey.value = "";
+  }
+}
+
+function toggleSelectMode() {
+  selecting.value = !selecting.value;
+  if (!selecting.value) {
+    selectedIds.value = [];
+  }
+}
+
+function toggleSelectAllOrInverse() {
+  const currentIds = store.items.map((item) => item.id);
+  if (currentIds.length === 0) return;
+
+  if (!allItemsSelected.value) {
+    selectedIds.value = [...currentIds];
+    return;
+  }
+
+  const selectedSet = new Set(selectedIds.value);
+  selectedIds.value = currentIds.filter((id) => !selectedSet.has(id));
+}
+
+function onToggleItemSelect(materialId, checked) {
+  const id = Number(materialId);
+  if (!Number.isFinite(id)) return;
+
+  const selectedSet = new Set(selectedIds.value);
+  if (checked) {
+    selectedSet.add(id);
+  } else {
+    selectedSet.delete(id);
+  }
+  selectedIds.value = Array.from(selectedSet);
+}
+
+function isSelected(materialId) {
+  return selectedIds.value.includes(Number(materialId));
 }
 
 async function onDropToNode(targetNode) {
-  const material = draggingMaterial.value;
+  const dragIds = [...draggingMaterialIds.value];
   draggingMaterial.value = null;
-  if (!material) return;
+  draggingMaterialIds.value = [];
+  dragOverNodeKey.value = "";
+  if (dragIds.length === 0) return;
 
   try {
+    const doFile = async (materialId, payload) => {
+      await store.fileMaterial(materialId, payload);
+    };
+
     if (targetNode.type === "script") {
-      await store.fileMaterial(material.id, {
-        target_type: "script",
-        script_folder_id: targetNode.id,
-      });
-      ElMessage.success(`已归档到 ${targetNode.productName} / ${targetNode.label}`);
-    } else if (targetNode.type === "general") {
-      await store.fileMaterial(material.id, { target_type: "general" });
-      ElMessage.success("已归档到定量素材");
+      let success = 0;
+      for (const materialId of dragIds) {
+        try {
+          await doFile(materialId, { target_type: "script", script_folder_id: targetNode.id });
+          success += 1;
+        } catch (_error) {}
+      }
+      if (success === 0) {
+        ElMessage.warning("拖拽归档失败");
+      } else {
+        ElMessage.success(`已归档 ${success} 个素材到 ${targetNode.productName} / ${targetNode.label}`);
+      }
     } else if (targetNode.type === "unfiled") {
-      await store.fileMaterial(material.id, { target_type: "unfiled" });
-      ElMessage.success("已归档到未归档");
+      let success = 0;
+      for (const materialId of dragIds) {
+        try {
+          await doFile(materialId, { target_type: "unfiled" });
+          success += 1;
+        } catch (_error) {}
+      }
+      if (success === 0) {
+        ElMessage.warning("拖拽归档失败");
+      } else {
+        ElMessage.success(`已归档 ${success} 个素材到未归档`);
+      }
     } else {
       return;
     }
@@ -370,15 +549,13 @@ async function doUpload() {
   const raws = pendingFiles.value;
   if (!raws?.length) return;
   if (!canUpload.value) {
-    ElMessage.warning("请先进入可上传的目录（定量素材/未归档/脚本子文件夹）");
+    ElMessage.warning("请先进入可上传的目录（未归档/脚本子文件夹）");
     return;
   }
 
   const node = selectedNode.value;
   let meta = { library_kind: "unfiled" };
-  if (node.type === "general") {
-    meta = { library_kind: "general" };
-  } else if (node.type === "script") {
+  if (node.type === "script") {
     meta = { library_kind: "product", script_folder_id: node.id };
   }
 
@@ -502,10 +679,33 @@ async function removeScriptFolder() {
 function materialPathTag(material) {
   const links = material.folder_links || [];
   const parts = links.map((item) => `${item.product_name}/${item.script_folder_name}`);
-  if (material.library_kind === "general") parts.unshift("定量素材");
+  if (material.library_kind === "general") parts.unshift("未归档");
   if (material.library_kind === "unfiled") parts.unshift("未归档");
   if (parts.length === 0) return "未归档";
   if (parts.length <= 2) return parts.join("，");
   return `${parts.slice(0, 2).join("，")} 等${parts.length}处`;
 }
 </script>
+
+<style scoped>
+.material-card-hoverable {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.material-card-hoverable:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  border-color: #93c5fd;
+}
+
+.material-card-dragging {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.28);
+  border-color: #3b82f6 !important;
+}
+
+.material-folder-drop-active {
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #60a5fa;
+}
+</style>

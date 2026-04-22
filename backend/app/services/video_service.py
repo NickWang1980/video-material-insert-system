@@ -184,6 +184,38 @@ def _clip_duration(event: MatchEvent) -> float:
     return max(0.01, event.end_time - event.start_time)
 
 
+def _apply_collision_layer_order(
+    overlay_labels: list[tuple[MatchEvent, str]],
+) -> list[tuple[MatchEvent, str]]:
+    if len(overlay_labels) <= 1:
+        return overlay_labels
+
+    grouped: dict[int, list[tuple[int, MatchEvent, str]]] = {}
+    for idx, (event, overlay_label) in enumerate(overlay_labels):
+        if event.subtitle_index <= 0 or event.layer_rank is None:
+            continue
+        grouped.setdefault(event.subtitle_index, []).append((idx, event, overlay_label))
+
+    if not grouped:
+        return overlay_labels
+
+    reordered = list(overlay_labels)
+    for items in grouped.values():
+        if len(items) <= 1:
+            continue
+
+        slots = sorted(item[0] for item in items)
+        # layer_rank 越小优先级越高；渲染时高层应最后 overlay，所以这里按降序排。
+        ordered = sorted(
+            items,
+            key=lambda item: (-(item[1].layer_rank or 0), item[0]),
+        )
+        for slot, (_, event, overlay_label) in zip(slots, ordered):
+            reordered[slot] = (event, overlay_label)
+
+    return reordered
+
+
 def build_ffmpeg_command(
     settings: Settings,
     *,
@@ -310,6 +342,8 @@ def build_ffmpeg_command(
                         f"colorchannelmixer=aa={opacity}[{ov}]"
                     )
                 overlay_labels.append((event, ov))
+
+    overlay_labels = _apply_collision_layer_order(overlay_labels)
 
     current = base_label
     for i, (event, overlay_label) in enumerate(overlay_labels):

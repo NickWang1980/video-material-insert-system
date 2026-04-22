@@ -132,7 +132,7 @@ async function onSubmit(payload) {
     ? created.keyword_collision_warnings.length
     : 0;
   if (warningCount > 0) {
-    ElMessage.warning(`任务已创建，检测到 ${warningCount} 处近距离关键词冲突，已按长词优先处理`);
+    ElMessage.warning(`任务已创建，检测到 ${warningCount} 处近距离关键词冲突，请在“冲突层级设置”中调整上下层`);
   } else {
     ElMessage.success("任务已创建");
   }

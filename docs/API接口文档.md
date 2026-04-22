@@ -37,11 +37,11 @@
 - `config_ids`：模板 ID（可多次传入）
 - `subtitle_source`：`uploaded|asr`（可选，默认 `uploaded`）
 - `add_subtitle_to_video`：`true|false`（可选，默认 `false`）
-- `collision_priority_json`：冲突优先级 JSON（可选），格式示例：`{"5":["精准","抖音"]}`
+- `collision_priority_json`：冲突层级顺序 JSON（可选，数组从上到下），示例：`{"5":["精准","抖音"]}`
 
 规则：
 - 多模板“同名关键词冲突”返回 `400` 并阻止创建。
-- “同一字幕行近距离冲突”仅警告，不阻止创建；运行时按“长词优先”抑制短词。
+- “同一字幕行近距离冲突”仅警告，不阻止创建；运行时按层级顺序全部叠加（上层最后 overlay）。
 
 响应新增字段：
 - `keyword_collision_warnings[]`（结构同预检接口）
@@ -154,7 +154,7 @@
 - `GET /api/stats`
 
 ### 产品分类素材库目录树重构（2026-04-22）
-- `GET /api/materials/tree`：获取素材目录树（定量素材 + 产品目录 + 脚本子文件夹）
+- `GET /api/materials/tree`：获取素材目录树（未归档 + 产品目录 + 脚本子文件夹）
 - `POST /api/materials/products`：新建产品目录
 - `PUT /api/materials/products/{id}`：重命名产品目录
 - `DELETE /api/materials/products/{id}`：删除产品目录（非空拒绝）
@@ -170,7 +170,7 @@
 - 上传：`POST /api/materials`
   - `library_kind`: `general|unfiled|product`
   - `script_folder_id`: 当 `library_kind=product` 必填
-- 目录树：`GET /api/materials/tree` 返回 `general_label/unfiled_label/product_label/products[]`
+- 目录树：`GET /api/materials/tree` 返回 `unfiled_label/product_label/products[]`
 - 归档：`POST /api/materials/{id}/file`
   - `target_type`: `general|unfiled|script`
   - `script_folder_id`: 当 `target_type=script` 必填

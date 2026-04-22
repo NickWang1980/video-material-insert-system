@@ -16,7 +16,7 @@ def write_report_xlsx(report_path: str, events: list[MatchEvent]) -> None:
     ws.title = "执行报告"
 
     headers = [
-        "关键字",
+        "关键词",
         "字幕索引",
         "字幕文本",
         "出现时间",
@@ -29,6 +29,7 @@ def write_report_xlsx(report_path: str, events: list[MatchEvent]) -> None:
         "是否循环",
         "触发规则",
         "素材宽度占比(%)",
+        "冲突层级(1为最上层)",
         "植入状态",
         "失败原因",
         "提示音配置",
@@ -57,6 +58,7 @@ def write_report_xlsx(report_path: str, events: list[MatchEvent]) -> None:
                 e.loop,
                 e.trigger_rule,
                 round(e.size_ratio_percent, 2),
+                (e.layer_rank + 1) if e.layer_rank is not None else "",
                 "成功" if e.status == "success" else "失败",
                 e.reason or "",
                 e.cue_sound_config or "随机",
