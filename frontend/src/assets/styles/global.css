@@ -31,3 +31,140 @@ body {
     filter: saturate(1.45);
   }
 }
+
+/* ──────────────────────────────────────────────
+   Dark mode — Element Plus CSS variable overrides
+   ────────────────────────────────────────────── */
+html.dark {
+  /* Core backgrounds */
+  --el-bg-color: #1f2937;
+  --el-bg-color-page: #111827;
+  --el-bg-color-overlay: #253347;
+
+  /* Text — avoid pure white; use soft off-white for readability */
+  --el-text-color-primary: #f3f4f6;
+  --el-text-color-regular: #d1d5db;
+  --el-text-color-secondary: #9ca3af;
+  --el-text-color-placeholder: #6b7280;
+  --el-text-color-disabled: #4b5563;
+
+  /* Borders */
+  --el-border-color: #4b5563;
+  --el-border-color-light: #374151;
+  --el-border-color-lighter: #374151;
+  --el-border-color-extra-light: #2d3748;
+  --el-border-color-dark: #6b7280;
+  --el-border-color-darker: #9ca3af;
+
+  /* Fill */
+  --el-fill-color: #374151;
+  --el-fill-color-blank: #1f2937;
+  --el-fill-color-light: #374151;
+  --el-fill-color-lighter: #2d3748;
+  --el-fill-color-extra-light: #253347;
+  --el-fill-color-dark: #4b5563;
+  --el-fill-color-darker: #6b7280;
+
+  /* Table */
+  --el-table-tr-bg-color: #1f2937;
+  --el-table-row-hover-bg-color: #2d3748;
+  --el-table-header-bg-color: #374151;
+  --el-table-border-color: #374151;
+  --el-table-text-color: #d1d5db;
+  --el-table-header-text-color: #9ca3af;
+
+  /* Input */
+  --el-input-bg-color: #1f2937;
+  --el-input-border-color: #4b5563;
+  --el-input-hover-border-color: #6b7280;
+  --el-input-focus-border-color: #9ca3af;
+  --el-input-text-color: #f3f4f6;
+  --el-input-placeholder-color: #6b7280;
+
+  /* Select dropdown */
+  --el-select-option-hover-background: #374151;
+  --el-select-option-selected-font-color: #f3f4f6;
+
+  /* Dialog */
+  --el-dialog-bg-color: #1f2937;
+  --el-dialog-title-font-size: 18px;
+
+  /* Popover / Tooltip */
+  --el-popper-theme-bg-color: #253347;
+  --el-popper-theme-text-color: #d1d5db;
+  --el-popper-theme-border-color: #374151;
+
+  /* Tag */
+  --el-tag-bg-color: #374151;
+  --el-tag-border-color: #4b5563;
+  --el-tag-text-color: #d1d5db;
+}
+
+/* ──────────────────────────────────────────────
+   Dark mode — Tailwind utility overrides
+   ────────────────────────────────────────────── */
+html.dark,
+html.dark body {
+  background-color: #111827;
+  color: #f3f4f6;
+}
+
+html.dark .bg-white {
+  background-color: #1f2937 !important;
+}
+
+html.dark .bg-gray-50 {
+  background-color: #111827 !important;
+}
+
+html.dark .bg-gray-100 {
+  background-color: #374151 !important;
+}
+
+html.dark .border-gray-100 {
+  border-color: #374151 !important;
+}
+
+html.dark .border-gray-200 {
+  border-color: #374151 !important;
+}
+
+html.dark .text-black {
+  color: #f3f4f6 !important;
+}
+
+html.dark .text-gray-900 {
+  color: #f3f4f6 !important;
+}
+
+html.dark .text-gray-800 {
+  color: #e5e7eb !important;
+}
+
+html.dark .text-gray-700 {
+  color: #d1d5db !important;
+}
+
+html.dark .text-gray-600 {
+  color: #9ca3af !important;
+}
+
+html.dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+html.dark .text-gray-400 {
+  color: #6b7280 !important;
+}
+
+html.dark .hover\:bg-gray-50:hover {
+  background-color: #374151 !important;
+}
+
+html.dark .hover\:bg-gray-100:hover {
+  background-color: #374151 !important;
+}
+
+html.dark .shadow-card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}

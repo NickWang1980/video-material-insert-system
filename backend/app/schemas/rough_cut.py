@@ -200,6 +200,8 @@ class UpdateSentenceRequest(BaseModel):
     roleId: str | None = None
     estimatedDuration: float | None = None
     locked: bool | None = None
+    sourceStart: float | None = None
+    sourceEnd: float | None = None
 
 
 class UpdateAssetManualGateRequest(BaseModel):
@@ -222,6 +224,13 @@ class StatusResponse(BaseModel):
     previewUrl: str | None = None
     outputUrl: str | None = None
     log: str = ""
+
+
+class FfmpegStatusResponse(BaseModel):
+    status: Literal["clear", "blocked"] = "clear"
+    runningCount: int = 0
+    runningProjectIds: list[int] = Field(default_factory=list)
+    blockedProjectIds: list[int] = Field(default_factory=list)
 
 
 class ListProjectsResponse(BaseModel):

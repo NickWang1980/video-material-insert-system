@@ -232,3 +232,18 @@ async function onSubmit(payload) {
   }
 }
 </style>
+
+<style>
+html.dark .flow-step {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+html.dark .flow-desc {
+  color: #9ca3af;
+}
+
+html.dark .flow-arrow {
+  color: #6b7280;
+}
+</style>

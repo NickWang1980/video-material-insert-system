@@ -201,6 +201,28 @@
               <div class="text-xs text-gray-500 mt-1">
                 {{ sentenceClipText(sentence.id) }}
               </div>
+
+              <div v-if="sentenceClips(sentence.id).length > 0" class="mt-1 flex items-center gap-1 flex-wrap">
+                <span class="text-xs text-gray-500">取材:</span>
+                <el-input-number
+                  v-model="getSentenceEdit(sentence.id).sourceStart"
+                  size="small"
+                  :precision="1"
+                  :step="0.1"
+                  :min="0"
+                  style="width: 90px"
+                />
+                <span class="text-xs text-gray-400">-</span>
+                <el-input-number
+                  v-model="getSentenceEdit(sentence.id).sourceEnd"
+                  size="small"
+                  :precision="1"
+                  :step="0.1"
+                  :min="0"
+                  style="width: 90px"
+                />
+                <span class="text-xs text-gray-400">秒</span>
+              </div>
             </div>
           </div>
         </div>
@@ -471,6 +493,7 @@ const timelineSliderTime = ref(0);
 const isDraggingTimelineSlider = ref(false);
 const lastMatchWarningKey = ref("");
 const sentenceLoading = reactive({});
+const sentenceEdits = reactive({});
 const uploadLoading = reactive({});
 const roleUploadFiles = reactive({});
 const assetActionLoading = reactive({});
@@ -637,6 +660,14 @@ watch(
     if (timelineSliderTime.value > seconds) {
       timelineSliderTime.value = seconds;
     }
+  }
+);
+
+watch(
+  () => project.value?.timeline,
+  () => {
+    // Re-initialize edits from fresh clip data after timeline rebuild
+    Object.keys(sentenceEdits).forEach((key) => delete sentenceEdits[key]);
   }
 );
 
@@ -856,6 +887,17 @@ function sentenceClipText(sentenceId) {
   const range = sentenceRange(sentenceId);
   const fileName = String(clip.filePath || "").split("/").pop();
   return `素材：${fileName} ${formatSeconds(clip.sourceStart)}-${formatSeconds(clip.sourceEnd)} ｜ 时间线 ${formatSeconds(range.start)}-${formatSeconds(range.end)}`;
+}
+
+function getSentenceEdit(sentenceId) {
+  if (!sentenceEdits[sentenceId]) {
+    const sentence = sentences.value.find((s) => s.id === sentenceId);
+    const clip = sentenceClips(sentenceId)[0];
+    const startOverride = sentence?.sourceStartOverride ?? clip?.sourceStart ?? 0;
+    const endOverride = sentence?.sourceEndOverride ?? clip?.sourceEnd ?? 0;
+    sentenceEdits[sentenceId] = { sourceStart: Number(startOverride), sourceEnd: Number(endOverride) };
+  }
+  return sentenceEdits[sentenceId];
 }
 
 function roleAssets(roleId) {
@@ -1161,12 +1203,30 @@ async function saveSentence(sentence) {
   sentenceLoading[sentence.id] = "save";
   try {
     const current = await ensureProject();
-    project.value = await updateRoughCutSentence(current.id, sentence.id, {
+    const edit = sentenceEdits[sentence.id];
+    const clip = sentenceClips(sentence.id)[0];
+    const payload = {
       roleId: sentence.roleId || null,
       estimatedDuration: Number(sentence.estimatedDuration || 0),
       locked: !!sentence.locked,
-    });
-    ElMessage.success(`句子 #${sentence.index} 已保存`);
+    };
+    const hasOverride =
+      edit &&
+      clip &&
+      (Math.abs(edit.sourceStart - clip.sourceStart) > 0.05 ||
+        Math.abs(edit.sourceEnd - clip.sourceEnd) > 0.05);
+    if (hasOverride) {
+      payload.sourceStart = edit.sourceStart;
+      payload.sourceEnd = edit.sourceEnd;
+    }
+    project.value = await updateRoughCutSentence(current.id, sentence.id, payload);
+    if (hasOverride) {
+      project.value = await regenerateRoughCutSentence(current.id, sentence.id);
+      await startExport("preview", true);
+      ElMessage.success(`句子 #${sentence.index} 已保存并重新取材`);
+    } else {
+      ElMessage.success(`句子 #${sentence.index} 已保存`);
+    }
   } catch (error) {
     ElMessage.error(error.message || "保存句子失败");
   } finally {

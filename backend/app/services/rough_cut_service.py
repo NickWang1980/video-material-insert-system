@@ -4,10 +4,11 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -692,6 +693,7 @@ def _find_best_segment_window(
     cursor_index: int,
     sentence_text: str,
     max_window_segments: int = 20,
+    min_start_time: float = 0.0,
 ) -> tuple[int, dict] | None:
     if not segments:
         return None
@@ -706,6 +708,9 @@ def _find_best_segment_window(
     start = max(0, cursor_index)
     end = len(segments)
     for start_idx in range(start, end):
+        segment_start = float(segments[start_idx].get("start") or 0.0)
+        if segment_start < min_start_time:
+            continue
         window_text_parts: list[str] = []
         window_char_limit = max(80, int(len(normalized_sentence) * 6))
         for end_idx in range(start_idx, min(len(segments), start_idx + max_window_segments)):
@@ -778,17 +783,23 @@ def _build_role_asr_pools(role_assets: list[dict]) -> list[dict]:
                 "cursor": 0,
             }
         )
+    pools.sort(key=lambda pool: float(pool["segments"][0].get("start") or 0.0) if pool.get("segments") else float("inf"))
     return pools
 
 
-def _find_best_asset_segment(role_pools: list[dict], sentence_text: str) -> tuple[dict, dict] | None:
+def _find_best_asset_segment(role_pools: list[dict], sentence_text: str, min_start_time: float = 0.0) -> tuple[dict, dict] | None:
     selected_pool: dict | None = None
     selected_segment: dict | None = None
     selected_index = -1
     selected_score = 0.0
 
     for pool in role_pools:
-        candidate = _find_best_segment_window(pool.get("segments") or [], int(pool.get("cursor") or 0), sentence_text)
+        candidate = _find_best_segment_window(
+            pool.get("segments") or [],
+            int(pool.get("cursor") or 0),
+            sentence_text,
+            min_start_time=min_start_time,
+        )
         if candidate is None:
             continue
         seg_index, segment = candidate
@@ -856,6 +867,7 @@ def build_timeline(
         role_id: {"assetIndex": 0, "offset": 0.0}
         for role_id in grouped_assets.keys()
     }
+    role_asr_min_start = {role_id: 0.0 for role_id in grouped_assets.keys()}
     role_asr_pools: dict[str, list[dict]] = {}
     for role_id, role_assets in grouped_assets.items():
         role_asr_pools[role_id] = _build_role_asr_pools(role_assets)
@@ -888,36 +900,48 @@ def build_timeline(
         source_end = 0.0
         duration = required
         looped_used = False
-        role_pools = role_asr_pools.get(role_id) or []
-        best_match = _find_best_asset_segment(role_pools, text)
-        if best_match is not None:
-            chosen_asset, seg = best_match
-            source_start = max(0.0, float(seg.get("start") or 0.0))
-            if sentence.get("locked"):
-                locked_duration = max(0.3, required)
-                asset_duration = max(source_start + 0.01, float(chosen_asset.get("duration") or 0.0))
-                source_end = min(asset_duration, source_start + locked_duration)
-                source_end = max(source_start + 0.01, source_end)
-                duration = max(0.3, source_end - source_start)
-            else:
-                source_end = max(source_start + 0.01, float(seg.get("end") or (source_start + 0.01)))
-                duration = max(0.3, source_end - source_start)
-            sentence["estimatedDuration"] = round(duration, 2)
-            fallback_cursor = role_cursors[role_id]
-            chosen_asset_idx = next(
-                (idx for idx, item in enumerate(role_assets) if str(item.get("id") or "") == str(chosen_asset.get("id") or "")),
-                0,
-            )
-            fallback_cursor["assetIndex"] = max(0, chosen_asset_idx)
-            fallback_cursor["offset"] = source_end
-        else:
-            chosen_asset, source_start, source_end, looped_used = _consume_fallback_clip(
-                role_assets=role_assets,
-                role_cursor=role_cursors[role_id],
-                required_duration=required,
-            )
+
+        src_start_override = sentence.get("sourceStartOverride")
+        src_end_override = sentence.get("sourceEndOverride")
+        if src_start_override is not None and src_end_override is not None:
+            # User manually specified the clip range — use it directly
+            source_start = float(src_start_override)
+            source_end = float(src_end_override)
             duration = max(0.3, source_end - source_start)
             sentence["estimatedDuration"] = round(duration, 2)
+            role_asr_min_start[role_id] = max(role_asr_min_start[role_id], source_end)
+        else:
+            role_pools = role_asr_pools.get(role_id) or []
+            best_match = _find_best_asset_segment(role_pools, text, min_start_time=role_asr_min_start.get(role_id, 0.0))
+            if best_match is not None:
+                chosen_asset, seg = best_match
+                source_start = max(0.0, float(seg.get("start") or 0.0))
+                if sentence.get("locked"):
+                    locked_duration = max(0.3, required)
+                    asset_duration = max(source_start + 0.01, float(chosen_asset.get("duration") or 0.0))
+                    source_end = min(asset_duration, source_start + locked_duration)
+                    source_end = max(source_start + 0.01, source_end)
+                    duration = max(0.3, source_end - source_start)
+                else:
+                    source_end = max(source_start + 0.01, float(seg.get("end") or (source_start + 0.01)))
+                    duration = max(0.3, source_end - source_start)
+                sentence["estimatedDuration"] = round(duration, 2)
+                fallback_cursor = role_cursors[role_id]
+                chosen_asset_idx = next(
+                    (idx for idx, item in enumerate(role_assets) if str(item.get("id") or "") == str(chosen_asset.get("id") or "")),
+                    0,
+                )
+                fallback_cursor["assetIndex"] = max(0, chosen_asset_idx)
+                fallback_cursor["offset"] = source_end
+            else:
+                chosen_asset, source_start, source_end, looped_used = _consume_fallback_clip(
+                    role_assets=role_assets,
+                    role_cursor=role_cursors[role_id],
+                    required_duration=required,
+                )
+                duration = max(0.3, source_end - source_start)
+                sentence["estimatedDuration"] = round(duration, 2)
+            role_asr_min_start[role_id] = max(role_asr_min_start[role_id], source_end)
 
         clip_id = uuid4().hex[:12]
         clip = {
@@ -1026,6 +1050,78 @@ def _clear_rough_cut_stop_requested(project_id: int) -> None:
         _stop_requested_rough_cut_projects.discard(project_id)
 
 
+def get_ffmpeg_health_status(db: Session | None = None) -> dict:
+    should_close_db = False
+    if db is None:
+        db = SessionLocal()
+        should_close_db = True
+    try:
+        running_project_ids: list[int] = []
+        blocked_project_ids: list[int] = []
+        now = datetime.now()
+        threshold = now - timedelta(seconds=120)
+        with _rough_cut_control_lock:
+            for project_id, process in _running_rough_cut_processes.items():
+                if process.poll() is None:
+                    running_project_ids.append(project_id)
+        for project_id in running_project_ids:
+            project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
+            if not project or project.status != ROUGH_CUT_STATUS_PROCESSING:
+                continue
+            updated_at = getattr(project, "updated_at", None)
+            if isinstance(updated_at, datetime) and updated_at < threshold:
+                blocked_project_ids.append(project_id)
+        return {
+            "status": "blocked" if blocked_project_ids else "clear",
+            "runningCount": len(running_project_ids),
+            "runningProjectIds": running_project_ids,
+            "blockedProjectIds": blocked_project_ids,
+        }
+    finally:
+        if should_close_db:
+            db.close()
+
+
+def clear_blocked_rough_cut_processes(settings: Settings) -> dict:
+    projects_to_clear: list[tuple[int, subprocess.Popen]] = []
+    with _rough_cut_control_lock:
+        for project_id, process in list(_running_rough_cut_processes.items()):
+            if process.poll() is None:
+                _stop_requested_rough_cut_projects.add(project_id)
+                projects_to_clear.append((project_id, process))
+
+    cleared_project_ids: list[int] = []
+    for project_id, process in projects_to_clear:
+        try:
+            process.terminate()
+            process.wait(timeout=3)
+        except Exception:
+            pass
+        if process.poll() is None:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        cleared_project_ids.append(project_id)
+
+    db = SessionLocal()
+    try:
+        for project_id in cleared_project_ids:
+            project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
+            if project and project.status == ROUGH_CUT_STATUS_PROCESSING:
+                project.phase = "stopping"
+                project.error_message = None
+                _append_log(project, "已疏通 FFmpeg 进程，停止生成任务。")
+                db.commit()
+    finally:
+        db.close()
+
+    return {
+        "clearedProjectIds": cleared_project_ids,
+        "runningCount": len(projects_to_clear),
+    }
+
+
 def request_stop_project_export(db: Session, project: RoughCutProject) -> RoughCutProject:
     process = None
     with _rough_cut_control_lock:
@@ -1065,45 +1161,47 @@ def _run_ffmpeg_command(cmd: list[str], error_prefix: str, *, project_id: int | 
     if project_id is not None:
         _raise_if_rough_cut_stop_requested(project_id)
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdin=subprocess.DEVNULL,
-    )
-    if project_id is not None:
-        _register_rough_cut_process(project_id, process)
+    with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(mode="w+b") as stderr_file:
+        process = subprocess.Popen(
+            cmd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            stdin=subprocess.DEVNULL,
+        )
+        if project_id is not None:
+            _register_rough_cut_process(project_id, process)
 
-    try:
-        while process.poll() is None:
-            if project_id is not None and _is_rough_cut_stop_requested(project_id):
-                try:
-                    process.terminate()
-                except Exception:
-                    pass
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
+        try:
+            while process.poll() is None:
+                if project_id is not None and _is_rough_cut_stop_requested(project_id):
                     try:
-                        process.kill()
+                        process.terminate()
                     except Exception:
                         pass
-                raise RoughCutStopRequested("已停止当前生成任务。")
-            time.sleep(0.2)
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                    raise RoughCutStopRequested("已停止当前生成任务。")
+                time.sleep(0.2)
 
-        stdout, stderr = process.communicate()
-    finally:
-        if project_id is not None:
-            _unregister_rough_cut_process(project_id)
+            returncode = process.poll()
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout = stdout_file.read().decode("utf-8", errors="replace")
+            stderr = stderr_file.read().decode("utf-8", errors="replace")
+        finally:
+            if project_id is not None:
+                _unregister_rough_cut_process(project_id)
 
     if project_id is not None and _is_rough_cut_stop_requested(project_id):
         raise RoughCutStopRequested("已停止当前生成任务。")
 
-    if process.returncode != 0:
-        err = (stderr or "").strip() or (stdout or "").strip() or str(process.returncode)
+    if returncode != 0:
+        err = (stderr or "").strip() or (stdout or "").strip() or str(returncode)
         raise RuntimeError(f"{_repair_text_if_needed(error_prefix)}: {err}")
 
 
@@ -1809,9 +1907,12 @@ def update_sentence(
     role_id: str | None = None,
     estimated_duration: float | None = None,
     locked: bool | None = None,
+    source_start: float | None = None,
+    source_end: float | None = None,
 ) -> RoughCutProject:
     sentences = _safe_json_loads(project.sentences_json, [])
     found = False
+    has_time_override = source_start is not None and source_end is not None
     for sentence in sentences:
         if sentence.get("id") != sentence_id:
             continue
@@ -1822,12 +1923,31 @@ def update_sentence(
             sentence["estimatedDuration"] = round(max(0.8, float(estimated_duration)), 2)
         if locked is not None:
             sentence["locked"] = bool(locked)
+        if has_time_override:
+            sentence["sourceStartOverride"] = round(float(source_start), 3)
+            sentence["sourceEndOverride"] = round(float(source_end), 3)
+            override_duration = max(0.3, float(source_end) - float(source_start))
+            sentence["estimatedDuration"] = round(override_duration, 2)
         break
     if not found:
         raise ValueError("句子不存在。")
 
     project.sentences_json = _safe_json_dumps(sentences)
-    project.timeline_json = "[]"
+
+    if has_time_override:
+        # Patch the existing timeline clip directly so other sentences are preserved
+        timeline = _safe_json_loads(project.timeline_json, [])
+        for clip in timeline:
+            if clip.get("sentenceId") == sentence_id:
+                clip["sourceStart"] = round(float(source_start), 3)
+                clip["sourceEnd"] = round(float(source_end), 3)
+                clip["duration"] = round(max(0.3, float(source_end) - float(source_start)), 3)
+                break
+        project.timeline_json = _safe_json_dumps(timeline)
+        _append_log(project, f"句子 {sentence_id} 取材时间覆盖：{source_start:.3f}-{source_end:.3f}。")
+    else:
+        project.timeline_json = "[]"
+
     project.status = ROUGH_CUT_STATUS_IDLE
     project.progress = 0
     project.phase = "update_sentence"
@@ -2094,6 +2214,8 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
         project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
         if project:
             _append_log(project, f"角色素材ASR识别完成：{Path(source_path).name}")
+            if refresh_sentence_durations_from_asr(project):
+                _append_log(project, "ASR 识别完成后已刷新句子时长。")
             db.commit()
         schedule_project_auto_preview(settings, project_id=project_id)
     except Exception as exc:
@@ -2184,6 +2306,9 @@ def _export_worker(settings: Settings, project_id: int, mode: str) -> None:
         db.commit()
 
         _raise_if_rough_cut_stop_requested(project_id)
+        if refresh_sentence_durations_from_asr(project):
+            db.commit()
+            db.refresh(project)
         _set_processing(project, "build_timeline", 36, db, "开始选片并生成时间线。")
         assets = _safe_json_loads(project.assets_json, [])
         if not assets:
@@ -2244,6 +2369,76 @@ def regenerate_one_sentence(db: Session, project: RoughCutProject, sentence_id: 
         raise ValueError("句子不存在。")
     # V1：单句重生成触发时间线重建，保留其它句子配置（角色/时长/锁定）。
     return build_project_timeline(db, project, recalculate_durations=False)
+
+
+def render_sentence_preview(settings: Settings, project: RoughCutProject, sentence_id: str) -> str:
+    """同步渲染单个分镜句子的预览片段，返回输出文件路径。"""
+    sentences = _safe_json_loads(project.sentences_json, [])
+    sentence = next((s for s in sentences if s.get("id") == sentence_id), None)
+    if not sentence:
+        raise ValueError("句子不存在。")
+
+    clip_id = sentence.get("clipId")
+    if not clip_id:
+        raise ValueError("该句子尚未生成取材区间，请先构建时间线。")
+
+    timeline = _safe_json_loads(project.timeline_json, [])
+    clip = next((c for c in timeline if c.get("id") == clip_id), None)
+    if not clip:
+        raise ValueError("时间线片段不存在，请重新构建时间线。")
+
+    source_path = Path(str(clip.get("filePath", "")))
+    if not source_path.exists():
+        raise ValueError(f"素材文件不存在：{source_path}")
+
+    source_start = float(clip.get("sourceStart") or 0.0)
+    source_end = float(clip.get("sourceEnd") or source_start + 0.5)
+    duration = max(0.3, source_end - source_start)
+
+    render_settings = _safe_json_loads(project.settings_json, {})
+    aspect_ratio = str(render_settings.get("aspectRatio", "9:16"))
+    resolution = str(render_settings.get("resolution", "1080p"))
+    fps = int(render_settings.get("fps", 30))
+    audio_mode = str(render_settings.get("audioMode", "keep"))
+    width, height = _resolution_size(aspect_ratio, resolution)
+
+    out_dir = settings.data_dir / "outputs" / "rough_cut" / "sentence_previews" / f"project_{project.id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{sentence_id}.mp4"
+
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={fps},setsar=1"
+    )
+
+    has_audio = _probe_has_audio(settings, source_path.as_posix())
+
+    if audio_mode in ("mute", "tts") or not has_audio:
+        cmd = [
+            settings.ffmpeg_bin, "-y",
+            "-ss", f"{source_start:.3f}",
+            "-to", f"{source_end:.3f}",
+            "-i", source_path.as_posix(),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            "-pix_fmt", "yuv420p", "-an",
+            out_file.as_posix(),
+        ]
+    else:
+        cmd = [
+            settings.ffmpeg_bin, "-y",
+            "-ss", f"{source_start:.3f}",
+            "-to", f"{source_end:.3f}",
+            "-i", source_path.as_posix(),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            out_file.as_posix(),
+        ]
+
+    _run_ffmpeg_command(cmd, "单句预览渲染失败")
+    return str(out_file)
 
 
 def append_assets(

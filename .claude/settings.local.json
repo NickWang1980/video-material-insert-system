@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python -m uvicorn main:app --reload --port 8000)",
+      "Bash(npm run *)",
+      "Bash(.venv\\\\Scripts\\\\python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload)",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\techm\\\\Downloads\\\\doubao\\\\coding\\\\video-material-insert-system\"; Start-Process -FilePath \".venv\\\\Scripts\\\\python.exe\" -ArgumentList \"-m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload\" -PassThru -WindowStyle Hidden; Start-Sleep 4; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -TimeoutSec 3 -ErrorAction Stop; \"Backend up: $\\($r.StatusCode\\)\" } catch { \"Backend check: $_\" })",
+      "PowerShell(Start-Sleep 3; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/\" -TimeoutSec 3 -ErrorAction Stop; \"Root: $\\($r.StatusCode\\)\" } catch { $_.Exception.Message }; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/api/rough-cut/projects\" -TimeoutSec 3 -ErrorAction Stop; \"API OK: $\\($r.StatusCode\\)\" } catch { $_.Exception.Message })"
+    ]
+  }
+}

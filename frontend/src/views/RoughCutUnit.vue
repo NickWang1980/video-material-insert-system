@@ -298,9 +298,34 @@
               controls-position="right"
               size="small"
             />
-            <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
-              <span>{{ sentenceClipText(sentence.id) }}</span>
-              <el-switch v-model="sentence.locked" size="small" active-text="锁定时长" inactive-text="自动时长" />
+            <div class="flex flex-col gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
+              <div class="flex items-center justify-between gap-3">
+                <span>{{ sentenceClip(sentence.id) ? "取材区间（可编辑）" : "尚未生成取材区间" }}</span>
+                <el-switch v-model="sentence.locked" size="small" active-text="锁定时长" inactive-text="自动时长" />
+              </div>
+              <div v-if="sentenceClip(sentence.id)" class="mt-1 flex flex-wrap items-center gap-1">
+                <el-input-number
+                  v-model="getSentenceEdit(sentence.id).sourceStart"
+                  size="small"
+                  :precision="1"
+                  :step="0.1"
+                  :min="0"
+                  style="width: 90px"
+                />
+                <span class="text-gray-400">-</span>
+                <el-input-number
+                  v-model="getSentenceEdit(sentence.id).sourceEnd"
+                  size="small"
+                  :precision="1"
+                  :step="0.1"
+                  :min="0"
+                  style="width: 90px"
+                />
+                <span class="text-gray-400">秒</span>
+                <span class="ml-2 text-gray-400">
+                  ｜ 时间线 {{ formatSeconds(sentenceClip(sentence.id).timelineStart) }} - {{ formatSeconds(sentenceClip(sentence.id).timelineEnd) }}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -314,12 +339,30 @@
             </el-button>
             <el-button
               size="small"
+              :loading="sentencePreviewLoading[sentence.id]"
+              :disabled="!sentenceClip(sentence.id)"
+              @click="previewSentence(sentence)"
+            >
+              预览本句
+            </el-button>
+            <el-button
+              size="small"
               text
               :loading="sentenceLoading[sentence.id] === 'regen'"
               @click="regenerateSentence(sentence)"
             >
               重生本句预览
             </el-button>
+          </div>
+
+          <div v-if="sentencePreviewUrls[sentence.id]" class="mt-3">
+            <video
+              :src="sentencePreviewUrls[sentence.id]"
+              controls
+              playsinline
+              class="w-full rounded-xl"
+              style="max-height: 280px; background: #000"
+            />
           </div>
         </article>
       </div>
@@ -359,6 +402,19 @@
             @click="exportFinal"
           >
             导出最终 MP4
+          </el-button>
+          <el-tag :type="ffmpegStatus === 'blocked' ? 'danger' : 'success'">
+            FFmpeg {{ ffmpegStatus === 'blocked' ? '阻塞' : '通畅' }}
+            <span v-if="ffmpegRunningCount">· {{ ffmpegRunningCount }} 个进程</span>
+          </el-tag>
+          <el-button
+            v-if="ffmpegStatus === 'blocked'"
+            type="danger"
+            plain
+            :loading="ffmpegClearing"
+            @click="clearFfmpegBlockedProcesses"
+          >
+            疏通 FFmpeg
           </el-button>
         </div>
       </div>
@@ -607,13 +663,18 @@ import {
   getRoughCutAssetMediaUrl,
   getRoughCutProject,
   getRoughCutProjectCompare,
+  getRoughCutFfmpegStatus,
   getRoughCutStatus,
   getRoughCutMediaUrl,
   listRoughCutProjects,
+  clearRoughCutFfmpegBlocked,
   setRoughCutAssetManualGate,
   stopRoughCutProject,
   updateRoughCutProject,
   updateRoughCutSentence,
+  regenerateRoughCutSentence,
+  previewRoughCutSentence,
+  getSentencePreviewUrl,
   uploadRoughCutAssets,
 } from "../api/roughCut";
 
@@ -636,8 +697,15 @@ const loading = reactive({
 });
 
 const sentenceLoading = reactive({});
+const sentenceEdits = reactive({});
+const sentencePreviewLoading = reactive({});
+const sentencePreviewUrls = reactive({});
 const assetActionLoading = reactive({});
-const seenCompletedAssets = reactive({});
+const ffmpegStatus = ref("clear");
+const ffmpegRunningCount = ref(0);
+const ffmpegBlockedProjectIds = ref([]);
+const ffmpegLoading = ref(false);
+const ffmpegClearing = ref(false);
 
 const createDialog = reactive({
   visible: false,
@@ -889,7 +957,7 @@ async function loadProject(projectId) {
   if (!projectId) return;
   project.value = await getRoughCutProject(projectId);
   syncAfterProjectUpdate();
-  maybeOpenCompareOnCompletedAssets();
+  await refreshFfmpegStatus();
   startStatusPolling();
 }
 
@@ -900,6 +968,35 @@ function syncAfterProjectUpdate() {
   }
   if (!timeline.value.length) {
     timelineSliderTime.value = 0;
+  }
+}
+
+async function refreshFfmpegStatus() {
+  ffmpegLoading.value = true;
+  try {
+    const result = await getRoughCutFfmpegStatus();
+    ffmpegStatus.value = result?.status || "clear";
+    ffmpegRunningCount.value = Number(result?.runningCount || 0);
+    ffmpegBlockedProjectIds.value = result?.blockedProjectIds || [];
+  } catch (error) {
+    ffmpegStatus.value = "clear";
+  } finally {
+    ffmpegLoading.value = false;
+  }
+}
+
+async function clearFfmpegBlockedProcesses() {
+  if (ffmpegClearing.value) return;
+  ffmpegClearing.value = true;
+  try {
+    await clearRoughCutFfmpegBlocked();
+    ElMessage.success("FFmpeg 进程已疏通");
+    await refreshFfmpegStatus();
+    await pollProjectStatus();
+  } catch (error) {
+    ElMessage.error(error.message || "疏通 FFmpeg 失败");
+  } finally {
+    ffmpegClearing.value = false;
   }
 }
 
@@ -1014,12 +1111,31 @@ async function saveSentence(sentence) {
   if (!project.value?.id) return;
   sentenceLoading[sentence.id] = "save";
   try {
-    project.value = await updateRoughCutSentence(project.value.id, sentence.id, {
+    const edit = sentenceEdits[sentence.id];
+    const clip = sentenceClip(sentence.id);
+    const payload = {
       estimatedDuration: Number(sentence.estimatedDuration || 0),
       locked: !!sentence.locked,
-    });
+    };
+    const hasOverride =
+      edit &&
+      clip &&
+      (Math.abs(edit.sourceStart - clip.sourceStart) > 0.05 ||
+        Math.abs(edit.sourceEnd - clip.sourceEnd) > 0.05);
+    if (hasOverride) {
+      payload.sourceStart = edit.sourceStart;
+      payload.sourceEnd = edit.sourceEnd;
+    }
+    project.value = await updateRoughCutSentence(project.value.id, sentence.id, payload);
     syncAfterProjectUpdate();
-    ElMessage.success(`分镜 #${sentence.index} 已保存`);
+    if (hasOverride) {
+      project.value = await regenerateRoughCutSentence(project.value.id, sentence.id);
+      syncAfterProjectUpdate();
+      delete sentenceEdits[sentence.id];
+      ElMessage.success(`分镜 #${sentence.index} 已保存并重新取材`);
+    } else {
+      ElMessage.success(`分镜 #${sentence.index} 已保存`);
+    }
   } catch (error) {
     ElMessage.error(error.message || "保存分镜失败");
   } finally {
@@ -1154,22 +1270,6 @@ async function updateManualGate(asset, manualPassed) {
   }
 }
 
-function maybeOpenCompareOnCompletedAssets() {
-  for (const asset of assets.value) {
-    const key = `${project.value?.id}_${asset.id}_${asset.asrSrtPath || asset.asrProgress}`;
-    const previous = seenCompletedAssets[asset.id];
-    const nowCompleted = String(asset.asrStatus || "").toLowerCase() === "completed";
-    if (nowCompleted && previous !== key) {
-      seenCompletedAssets[asset.id] = key;
-      openCompareDialog(asset.roleId || "", asset.id);
-      break;
-    }
-    if (!nowCompleted && previous && String(asset.asrStatus || "").toLowerCase() !== "completed") {
-      seenCompletedAssets[asset.id] = previous;
-    }
-  }
-}
-
 function stageLabel(stage) {
   const map = {
     draft: "待上传剧本",
@@ -1219,6 +1319,31 @@ function sentenceClipText(sentenceId) {
   return `取材 ${formatSeconds(clip.sourceStart)} - ${formatSeconds(clip.sourceEnd)} ｜ 时间线 ${formatSeconds(
     clip.timelineStart
   )} - ${formatSeconds(clip.timelineEnd)}`;
+}
+
+function getSentenceEdit(sentenceId) {
+  if (!sentenceEdits[sentenceId]) {
+    const sentence = sentences.value.find((s) => s.id === sentenceId);
+    const clip = sentenceClip(sentenceId);
+    const start = sentence?.sourceStartOverride ?? clip?.sourceStart ?? 0;
+    const end = sentence?.sourceEndOverride ?? clip?.sourceEnd ?? 0;
+    sentenceEdits[sentenceId] = { sourceStart: Number(start), sourceEnd: Number(end) };
+  }
+  return sentenceEdits[sentenceId];
+}
+
+async function previewSentence(sentence) {
+  if (!project.value?.id) return;
+  sentencePreviewLoading[sentence.id] = true;
+  delete sentencePreviewUrls[sentence.id];
+  try {
+    await previewRoughCutSentence(project.value.id, sentence.id);
+    sentencePreviewUrls[sentence.id] = getSentencePreviewUrl(project.value.id, sentence.id) + `?t=${Date.now()}`;
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || "单句预览生成失败");
+  } finally {
+    sentencePreviewLoading[sentence.id] = false;
+  }
 }
 
 function timelineClipStyle(clip) {
@@ -1276,7 +1401,7 @@ async function pollProjectStatus() {
     const latest = await getRoughCutProject(project.value.id);
     project.value = latest;
     syncAfterProjectUpdate();
-    maybeOpenCompareOnCompletedAssets();
+    await refreshFfmpegStatus();
     if (compareDialog.visible) {
       await refreshCompareData();
     }

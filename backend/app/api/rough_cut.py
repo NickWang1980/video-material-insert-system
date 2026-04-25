@@ -16,6 +16,7 @@ from ..schemas.rough_cut import (
     CompareProjectResponse,
     CreateProjectRequest,
     ExportRequest,
+    FfmpegStatusResponse,
     ListProjectsResponse,
     RoleAsset,
     RoughCutProjectResponse,
@@ -39,6 +40,7 @@ from ..services.rough_cut_service import (
     patch_project,
     project_to_payload,
     regenerate_one_sentence,
+    render_sentence_preview,
     request_stop_project_export,
     schedule_project_auto_preview,
     schedule_asr_for_rough_cut_asset,
@@ -47,6 +49,8 @@ from ..services.rough_cut_service import (
     start_export_job,
     update_project_settings,
     update_sentence,
+    get_ffmpeg_health_status,
+    clear_blocked_rough_cut_processes,
 )
 
 
@@ -166,6 +170,24 @@ async def api_upload_assets(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _serialize_project(project)
+
+
+@router.get("/ffmpeg/status", response_model=FfmpegStatusResponse)
+async def api_ffmpeg_status(
+    db: Session = Depends(get_db),
+):
+    return get_ffmpeg_health_status(db)
+
+
+@router.post("/ffmpeg/clear", response_model=MessageResponse)
+async def api_ffmpeg_clear(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+):
+    result = clear_blocked_rough_cut_processes(settings)
+    if not result.get("clearedProjectIds"):
+        return MessageResponse(message="当前没有需要疏通的 FFmpeg 进程")
+    return MessageResponse(message=f"已疏通 {len(result.get('clearedProjectIds', []))} 个 FFmpeg 项目")
 
 
 @router.get("/projects/{project_id}/assets", response_model=list[RoleAsset])
@@ -326,6 +348,8 @@ async def api_update_sentence(
             role_id=payload.roleId,
             estimated_duration=payload.estimatedDuration,
             locked=payload.locked,
+            source_start=payload.sourceStart,
+            source_end=payload.sourceEnd,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -415,3 +439,37 @@ async def api_project_media(
     if not path or not Path(path).exists():
         raise HTTPException(status_code=404, detail="媒体文件不存在")
     return FileResponse(path, filename=Path(path).name)
+
+
+@router.post("/projects/{project_id}/sentence-preview/{sentence_id}")
+async def api_sentence_preview(
+    project_id: int,
+    sentence_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+):
+    project = _safe_get_project(db, project_id)
+    try:
+        render_sentence_preview(settings, project, sentence_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.get("/projects/{project_id}/sentence-preview/{sentence_id}/media")
+async def api_sentence_preview_media(
+    project_id: int,
+    sentence_id: str,
+    settings: Settings = Depends(get_app_settings),
+):
+    out_file = (
+        settings.data_dir
+        / "outputs"
+        / "rough_cut"
+        / "sentence_previews"
+        / f"project_{project_id}"
+        / f"{sentence_id}.mp4"
+    )
+    if not out_file.exists():
+        raise HTTPException(status_code=404, detail="单句预览不存在，请先点击预览。")
+    return FileResponse(str(out_file), filename=f"preview_{sentence_id}.mp4", media_type="video/mp4")

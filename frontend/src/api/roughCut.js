@@ -110,6 +110,16 @@ export async function getRoughCutStatus(projectId) {
   return data;
 }
 
+export async function getRoughCutFfmpegStatus() {
+  const { data } = await api.get(`/rough-cut/ffmpeg/status`);
+  return data;
+}
+
+export async function clearRoughCutFfmpegBlocked() {
+  const { data } = await api.post(`/rough-cut/ffmpeg/clear`);
+  return data;
+}
+
 export function getRoughCutMediaUrl(projectId, type = "preview") {
   const mediaType = type === "output" ? "output" : "preview";
   return `/api/rough-cut/projects/${projectId}/media?type=${mediaType}`;
@@ -117,4 +127,12 @@ export function getRoughCutMediaUrl(projectId, type = "preview") {
 
 export function getRoughCutAssetMediaUrl(projectId, assetId) {
   return `/api/rough-cut/projects/${projectId}/assets/${assetId}/media`;
+}
+
+export async function previewRoughCutSentence(projectId, sentenceId) {
+  await api.post(`/rough-cut/projects/${projectId}/sentence-preview/${sentenceId}`);
+}
+
+export function getSentencePreviewUrl(projectId, sentenceId) {
+  return `/api/rough-cut/projects/${projectId}/sentence-preview/${sentenceId}/media`;
 }
