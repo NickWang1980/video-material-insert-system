@@ -356,6 +356,7 @@ def init_db(settings: Settings) -> None:
     from .material_folder_binding import MaterialFolderBinding  # noqa: F401
     from .material_product import MaterialProduct  # noqa: F401
     from .material_script_folder import MaterialScriptFolder  # noqa: F401
+    from .rough_cut_project import RoughCutProject  # noqa: F401
     from .settings import SettingsRow  # noqa: F401
     from .source_video_entry import SourceVideoEntry  # noqa: F401
     from .task import Task  # noqa: F401

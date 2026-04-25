@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .app.api.configs import router as configs_router
 from .app.api.materials import router as materials_router
+from .app.api.rough_cut import router as rough_cut_router
 from .app.api.settings import router as settings_router
 from .app.api.source_videos import router as source_videos_router
 from .app.api.stats import router as stats_router
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
         resume_pending_asr_jobs(settings)
 
     app.include_router(tasks_router)
+    app.include_router(rough_cut_router)
     app.include_router(configs_router)
     app.include_router(materials_router)
     app.include_router(source_videos_router)
