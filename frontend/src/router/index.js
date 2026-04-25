@@ -8,6 +8,7 @@ import ConfigEditor from "../views/ConfigEditor.vue";
 import MaterialLibrary from "../views/MaterialLibrary.vue";
 import SourceVideoLibrary from "../views/SourceVideoLibrary.vue";
 import Settings from "../views/Settings.vue";
+import RoughCutUnit from "../views/RoughCutUnit.vue";
 
 const routes = [
   { path: "/", name: "home", component: Home },
@@ -18,6 +19,8 @@ const routes = [
   { path: "/configs/:id", name: "configEdit", component: ConfigEditor, props: true },
   { path: "/materials", name: "materials", component: MaterialLibrary },
   { path: "/source-videos", name: "sourceVideos", component: SourceVideoLibrary },
+  { path: "/rough-cut/multi-role", redirect: "/rough-cut/unit" },
+  { path: "/rough-cut/unit", name: "roughCutUnit", component: RoughCutUnit },
   { path: "/settings", name: "settings", component: Settings },
 ];
 

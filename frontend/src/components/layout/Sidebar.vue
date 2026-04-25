@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <aside
     class="h-screen sticky top-0 border-r border-gray-200 bg-white transition-all duration-200"
     :class="collapsed ? 'w-[72px]' : 'w-[240px]'"
@@ -51,6 +51,7 @@ const items = [
   { to: "/configs", label: "配置模板", short: "模" },
   { to: "/materials", label: "素材库", short: "材" },
   { to: "/source-videos", label: "源视频库", short: "源" },
+  { to: "/rough-cut/unit", label: "混剪单元", short: "混" },
   { to: "/settings", label: "系统设置", short: "设" },
 ];
 </script>

@@ -19,6 +19,7 @@ const title = computed(() => {
     configEdit: "编辑模板",
     materials: "素材库",
     sourceVideos: "源视频库",
+    roughCutUnit: "混剪单元",
     settings: "系统设置",
   };
   return map[route.name] || "短视频智能素材自动植入工具";

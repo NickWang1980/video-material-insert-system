@@ -1,75 +1,73 @@
-# 短视频智能素材自动植入工具 V1.0
+﻿# 短视频智能素材自动植入工具 V1.0
 
-## 当前版本核心能力
-- 源视频条目创建时自动导出音轨：`WAV + FLAC`。
-- 支持用户上传 SRT，并支持后台 ASR 生成第二份 SRT（faster-whisper，本地离线）。
-- 创建任务时可选择字幕来源：`uploaded`（默认）或 `asr`。
-- 创建任务时可选“添加字幕SRT到视频”，默认不添加字幕到输出视频。
-- 任务支持多模板合并、冲突拦截、下载成品/报告/日志、停止任务。
-- 最近任务/任务列表支持显示任务耗费时间（`mm:ss`）。
-- 素材库支持分类管理：`未归档`、`产品分类素材（产品目录 + 子文件夹）`。
-- 素材库已升级目录树：支持拖拽归档素材；同一素材可归档到多个脚本子文件夹。
-- 模板规则支持目录上下文字段：`素材库分类`、`产品目录`、`脚本子文件夹`，同名素材可按目录精确绑定。
+## 核心能力
+- 任务管理：源视频条目 + 多模板合并 + 自动素材植入 + MP4/XLSX/TXT 下载。
+- 源视频库：视频/SRT 绑定、可选 ASR 字幕、WAV/FLAC 音轨导出。
+- 素材库：目录树管理、产品目录与子文件夹、多目录归档、预览与去音轨上传。
+- 模板系统：关键词规则、5×5位置选择器、冲突层级设置、提示音配置。
+- 新增功能：`/rough-cut/unit` 混剪单元（项目列表 + 剧本TXT上传 + 动态角色卡 + 自动ASR + 自动分镜头 + 自动预览混剪）。
+- 新增功能：`/rough-cut/multi-role` 多角色混剪工作台（文案拆句 → 角色分配 → 时间线 → 预览/导出）。
+  - 支持角色素材库管理：按项目独立、单角色多视频、批量上传、预览与删除。
+  - 支持每个素材独立ASR识别（简体中文）与素材粒度匹配率门槛控制（全部素材 `>=80%` 或手动通过后可一键混剪）。
+  - 支持ASR匹配对比弹窗：识别完成自动弹出，项目+角色+素材三级分页查看主文本与ASR文本对比，并支持“手动通过”。
 
-## 工程结构
-- `backend/`：FastAPI 后端（API + 任务处理 + FFmpeg + ASR）
-- `frontend/`：Vue3 + Vite + Element Plus + Tailwind
-- `data/`：SQLite、上传文件、输出文件
-- `scripts/`：启动与打包脚本
-- `docs/`：项目说明文档
+## 目录结构
+- `backend/`：FastAPI 后端（API + 服务层 + SQLite + FFmpeg/ASR）
+- `frontend/`：Vue3 + Vite + Element Plus 前端
+- `data/`：数据库、上传文件、输出文件
+- `scripts/`：启动脚本
+- `docs/`：接口与部署文档、变更记录
 
-## 依赖与环境
+## 运行环境
 - Python 3.11+
 - Node.js 18+
-- FFmpeg / ffprobe（需可在命令行直接调用）
-- ASR 依赖：`faster-whisper`
+- FFmpeg / ffprobe（系统可执行）
 
-## 开发模式启动
-```bat
-scripts\start_all.bat
-```
-或
+## 开发模式
 ```bash
 ./scripts/start_all.sh
 ```
-- 前端：`http://localhost:5173`
-- 后端：`http://localhost:8000`（OpenAPI：`/docs`）
-
-## 生产模式启动
+或 Windows：
 ```bat
-scripts\start_all.bat --prod
+scripts\start_all.bat
 ```
-或
+- 前端：`http://localhost:5173`
+- 后端：`http://localhost:8000`
+
+## 生产模式（后端托管前端）
 ```bash
 ./scripts/start_all.sh --prod
 ```
-- 访问：`http://localhost:8000/`
+或 Windows：
+```bat
+scripts\start_all.bat --prod
+```
+- 访问：`http://localhost:8000`
 
-## 编译与启动 CLI（手动）
+## 手动 CLI（编译 + 启动）
 1. 安装后端依赖：`pip install -r backend/requirements.txt`
 2. 安装前端依赖：`cd frontend && npm install`
-3. 前端构建：`cd frontend && npm run build`
-4. 开发启动：`python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload`
-5. 生产启动（加载 `frontend/dist`）：`python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000`
+3. 构建前端：`cd frontend && npm run build`
+4. 启动后端：`python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000`
 
-## 关键业务规则（更新）
-- ASR 为可选能力（本地离线），不依赖云 API。
-- 默认字幕来源为用户上传 SRT；任务侧按“ASR SRT 文件存在优先”判断可用性。
-- 源视频条目被任务引用时不可删除。
-- 删除任务不会删除源视频条目文件（视频/SRT/音轨），仅删除任务产物。
+## 多角色混剪使用
+1. 打开 `http://localhost:5173/rough-cut/multi-role`（生产态为 `http://localhost:8000/rough-cut/multi-role`）。
+2. 输入文案，点击“自动拆句”。
+3. 上传 A/B/C 角色素材（每个角色可上传多个，支持批量）。
+4. 等待每个素材独立ASR识别并查看匹配率（`<80%` 强提示）。
+5. 全部素材匹配率 `>=80%` 后“一键混剪”可点击；若单素材未达标，可在“匹配对比”弹窗中手动通过。
+6. 生成时间线后，每句片段时长以匹配到的角色视频 ASR 片段真实长度为准，不限制 8 秒上限。
+
+## 混剪单元使用
+1. 打开 `http://localhost:5173/rough-cut/unit`（生产态为 `http://localhost:8000/rough-cut/unit`）。
+2. 在顶部项目区新建混剪项目，并上传带角色前缀的 `.txt` 剧本。
+3. 系统会按剧本自动识别角色并生成角色素材卡片。
+4. 给每个角色拖拽/选择视频素材；上传后自动开始 ASR、自动计算匹配率。
+5. 当剧本中的全部角色都已有素材，且这些角色下全部素材都已完成识别并达到门槛后，系统会自动生成分镜头、时间线和预览版混剪。
+6. 如需人工干预，可在分镜头卡片打开“ASR匹配对比中心”，或修改句子时长后重新生成预览。
 
 ## 文档索引
-- `docs/项目开发文档.md`
-- `docs/技术架构与技术栈.md`
 - `docs/API接口文档.md`
 - `docs/部署指南.md`
-
-## 2026-04-21 更新（源视频条目）
-- 新建源视频条目时，`SRT` 改为非必填。
-- 未上传 `SRT` 时，前端会弹框提示将启动模型识别字幕（ASR）。
-- ASR 字幕命名规则：`<源视频条目名称>.srt`（按条目独立目录保存）。
-- 创建任务时：
-  - 默认字幕来源仍为 `uploaded`；
-  - 若条目未上传 `SRT`，仅当 `ASR` 完成后可选择 `ASR SRT` 创建任务。
-- ASR 支持循环递推重试（默认最多 3 次），并支持手动“重试识别”。
-- 修复 FFmpeg 大日志场景可能卡在 `75%` 的问题，新增超时保护与处理中心跳更新（75%→98%）。
+- `docs/项目开发文档.md`
+- `docs/技术架构与技术栈.md`
