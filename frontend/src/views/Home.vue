@@ -8,19 +8,19 @@
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-      <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-card">
         <div class="text-sm text-gray-500">总任务</div>
         <div class="text-2xl font-bold mt-2">{{ stats?.total_tasks ?? "-" }}</div>
       </div>
-      <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-card">
         <div class="text-sm text-gray-500">已完成</div>
         <div class="text-2xl font-bold mt-2">{{ stats?.completed_tasks ?? "-" }}</div>
       </div>
-      <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-card">
         <div class="text-sm text-gray-500">处理中</div>
         <div class="text-2xl font-bold mt-2">{{ stats?.processing_tasks ?? "-" }}</div>
       </div>
-      <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-card">
         <div class="text-sm text-gray-500">素材总数</div>
         <div class="text-2xl font-bold mt-2">{{ stats?.total_materials ?? "-" }}</div>
       </div>
@@ -245,5 +245,21 @@ html.dark .flow-desc {
 
 html.dark .flow-arrow {
   color: #6b7280;
+}
+
+html.glass .flow-step {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+html.glass .flow-desc {
+  color: rgba(255, 255, 255, 0.58) !important;
+}
+
+html.glass .flow-arrow {
+  color: rgba(255, 255, 255, 0.35) !important;
 }
 </style>

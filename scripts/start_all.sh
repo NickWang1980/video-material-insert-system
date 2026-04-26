@@ -18,4 +18,8 @@ fi
 
 ./scripts/start_backend.sh &
 ./scripts/start_frontend.sh &
+
+# Wait for frontend to be ready, then open login page
+(sleep 6 && cmd.exe /c start "" "http://localhost:5173/login" 2>/dev/null || xdg-open "http://localhost:5173/login" 2>/dev/null || open "http://localhost:5173/login" 2>/dev/null) &
+
 wait

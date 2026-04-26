@@ -235,3 +235,4 @@ class FfmpegStatusResponse(BaseModel):
 
 class ListProjectsResponse(BaseModel):
     items: list[RoughCutProjectResponse] = Field(default_factory=list)
+    total: int = 0

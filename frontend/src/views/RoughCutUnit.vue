@@ -20,8 +20,8 @@
           v-for="item in projects"
           :key="item.id"
           type="button"
-          class="rounded-2xl border p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
-          :class="currentProjectId === item.id ? 'border-black bg-black text-white' : 'border-gray-200 bg-gray-50 text-black'"
+          class="rcu-project-card rounded-2xl border p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+          :class="currentProjectId === item.id ? 'rcu-project-card--active border-black bg-black text-white' : 'border-gray-200 bg-gray-50 text-black'"
           @click="selectProject(item.id)"
         >
           <div class="flex items-start justify-between gap-3">
@@ -49,6 +49,18 @@
         </button>
       </div>
       <el-empty v-else class="mt-4" description="暂无混剪项目" />
+      <el-pagination
+        v-if="projectListTotal > projectListPageSize"
+        class="mt-4 flex justify-end"
+        background
+        layout="sizes, prev, pager, next, total"
+        :total="projectListTotal"
+        :page-size="projectListPageSize"
+        :page-sizes="[9, 18, 36]"
+        :current-page="projectListPage"
+        @size-change="handleProjectPageSizeChange"
+        @current-change="handleProjectPageChange"
+      />
     </section>
 
     <section
@@ -433,12 +445,12 @@
         </div>
 
         <div class="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.95fr)]">
-          <div class="rounded-2xl border border-gray-200 bg-black p-3 text-white">
+          <div class="rcu-player-shell rounded-2xl border border-gray-200 bg-black p-3 text-white">
             <div class="mb-3 flex items-center justify-between text-sm">
               <span>预览播放器</span>
               <span>{{ previewStatusText }}</span>
             </div>
-            <div class="relative overflow-hidden rounded-2xl border border-white/10 bg-black">
+            <div class="rcu-player-inner relative overflow-hidden rounded-2xl border border-white/10 bg-black">
               <video
                 v-if="currentMediaUrl"
                 :key="currentMediaUrl"
@@ -679,6 +691,9 @@ import {
 } from "../api/roughCut";
 
 const projects = ref([]);
+const projectListPage = ref(1);
+const projectListPageSize = ref(9);
+const projectListTotal = ref(0);
 const currentProjectId = ref(null);
 const project = ref(null);
 const timelineSliderTime = ref(0);
@@ -879,6 +894,7 @@ async function submitCreateProject() {
       scriptFileName: createDialog.scriptFileName || null,
     });
     createDialog.visible = false;
+    projectListPage.value = 1;
     await refreshProjectList(created.id);
     project.value = created;
     currentProjectId.value = created.id;
@@ -901,6 +917,7 @@ async function openRenameDialog() {
       cancelButtonText: "取消",
     });
     const updated = await updateRoughCutProject(project.value.id, { title: value });
+    projectListPage.value = 1;
     await refreshProjectList(updated.id);
     project.value = updated;
     syncAfterProjectUpdate();
@@ -921,6 +938,7 @@ async function removeProject(targetProject) {
     });
     await deleteRoughCutProject(targetProject.id);
     const isCurrent = currentProjectId.value === targetProject.id;
+    projectListPage.value = 1;
     await refreshProjectList(isCurrent ? null : currentProjectId.value);
     if (isCurrent) {
       if (projects.value.length) {
@@ -939,14 +957,30 @@ async function removeProject(targetProject) {
 }
 
 async function refreshProjectList(preferredId = null) {
-  const items = await listRoughCutProjects();
+  const { items, total } = await listRoughCutProjects(projectListPage.value, projectListPageSize.value);
+  projectListTotal.value = total;
   projects.value = items;
-  if (!items.length) {
+  if (!total) {
     currentProjectId.value = null;
     return;
   }
-  const targetId = preferredId || currentProjectId.value || items[0].id;
-  currentProjectId.value = items.some((item) => item.id === targetId) ? targetId : items[0].id;
+  const targetId = preferredId || currentProjectId.value;
+  if (targetId && items.some((item) => item.id === targetId)) {
+    currentProjectId.value = targetId;
+  } else if (items.length) {
+    currentProjectId.value = items[0].id;
+  }
+}
+
+async function handleProjectPageChange(page) {
+  projectListPage.value = page;
+  await refreshProjectList();
+}
+
+async function handleProjectPageSizeChange(size) {
+  projectListPageSize.value = size;
+  projectListPage.value = 1;
+  await refreshProjectList();
 }
 
 async function selectProject(projectId) {
@@ -1527,5 +1561,83 @@ onBeforeUnmount(() => {
     opacity: 1;
     transform: translateY(-6px);
   }
+}
+
+/* ─── Liquid Glass overrides ─────────────────────────────────────────────── */
+
+:global(html.glass) .workflow-node {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.10) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  ) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  backdrop-filter: blur(32px) saturate(160%);
+  -webkit-backdrop-filter: blur(32px) saturate(160%);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 40px rgba(0, 0, 0, 0.28) !important;
+}
+
+/* Keep the video player shell dark in glass mode */
+:global(html.glass) .rcu-player-shell {
+  background: rgba(6, 6, 16, 0.72) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 4px 24px rgba(0, 0, 0, 0.40) !important;
+}
+
+/* Keep the inner video viewport pure black */
+:global(html.glass) .rcu-player-inner {
+  background: #000 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Inactive project card: visible glass panel ── */
+:global(html.glass) .rcu-project-card {
+  background: rgba(255, 255, 255, 0.11) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 12px rgba(0, 0, 0, 0.18);
+}
+:global(html.glass) .rcu-project-card:hover {
+  background: rgba(255, 255, 255, 0.17) !important;
+  border-color: rgba(255, 255, 255, 0.34) !important;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.30),
+    0 6px 24px rgba(0, 0, 0, 0.24);
+}
+
+/* ── Active project card: prominent dark glass with purple accent ── */
+:global(html.glass) .rcu-project-card--active,
+:global(html.glass) .rcu-project-card.rcu-project-card--active {
+  background: rgba(12, 8, 32, 0.86) !important;
+  border-color: rgba(160, 130, 255, 0.55) !important;
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    inset 0 1.5px 0 rgba(200, 180, 255, 0.30),
+    0 0 0 1px rgba(160, 130, 255, 0.22),
+    0 6px 24px rgba(80, 40, 180, 0.28) !important;
+  color: #fff !important;
+}
+
+/* Step-badge pills in glass mode */
+:global(html.glass) .rounded-full.bg-black {
+  background: rgba(10, 10, 24, 0.80) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* Dashed upload-zone borders */
+:global(html.glass) .border-gray-300 {
+  border-color: rgba(255, 255, 255, 0.22) !important;
 }
 </style>

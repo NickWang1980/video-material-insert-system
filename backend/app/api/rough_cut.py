@@ -74,13 +74,22 @@ def _normalize_export_mode(mode: str) -> str:
 
 
 @router.get("/projects", response_model=ListProjectsResponse)
-async def api_list_projects(db: Session = Depends(get_db)):
-    items = (
+async def api_list_projects(
+    page: int = 1,
+    page_size: int = 9,
+    db: Session = Depends(get_db),
+):
+    query = (
         db.query(RoughCutProject)
         .order_by(RoughCutProject.updated_at.desc(), RoughCutProject.id.desc())
-        .all()
     )
-    return ListProjectsResponse(items=[_serialize_project(item) for item in items])
+    total = query.count()
+    skip = (max(page, 1) - 1) * max(page_size, 1)
+    items = query.offset(skip).limit(max(page_size, 1)).all()
+    return ListProjectsResponse(
+        items=[_serialize_project(item) for item in items],
+        total=total,
+    )
 
 
 @router.post("/projects", response_model=RoughCutProjectResponse)

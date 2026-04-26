@@ -8,4 +8,11 @@ import App from "./App.vue";
 
 import "./assets/styles/global.css";
 
-createApp(App).use(createPinia()).use(router).use(ElementPlus).mount("#app");
+const app = createApp(App);
+app.use(createPinia());
+app.use(router);
+app.use(ElementPlus);
+
+// Mount only after initial navigation resolves so App.vue never renders
+// with route.name === undefined (which causes white app-shell flash).
+router.isReady().then(() => app.mount("#app"));

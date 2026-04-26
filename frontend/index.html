@@ -2,9 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=2.0" />
     <title>短视频智能素材自动植入工具</title>
     <link rel="icon" href="/favicon.ico" />
+    <style>
+      /* Prevents white flash before Vue mounts */
+      #app:empty { background: #0a0a14; min-height: 100vh; }
+    </style>
     <script>
       if (localStorage.getItem("vmis_dark_mode") === "1") {
         document.documentElement.classList.add("dark");

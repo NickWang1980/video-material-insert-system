@@ -166,10 +166,8 @@ def _find_material_by_scope(
     if library_scope == "未归档":
         material = (
             db.query(Material)
-            .filter(
-                Material.library_kind == "unfiled",
-                Material.file_name == file_name,
-            )
+            .filter(Material.library_kind == "unfiled")
+            .filter(Material.file_name == file_name)
             .first()
         )
         if material is None:
@@ -178,10 +176,8 @@ def _find_material_by_scope(
 
     material = (
         db.query(Material)
-        .filter(
-            Material.library_kind == "general",
-            Material.file_name == file_name,
-        )
+        .filter(Material.library_kind == "general")
+        .filter(Material.file_name == file_name)
         .first()
     )
     if material is None:

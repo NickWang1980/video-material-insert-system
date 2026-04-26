@@ -1,8 +1,8 @@
 import { api } from "./index";
 
-export async function listRoughCutProjects() {
-  const { data } = await api.get("/rough-cut/projects");
-  return data?.items || [];
+export async function listRoughCutProjects(page = 1, pageSize = 9) {
+  const { data } = await api.get("/rough-cut/projects", { params: { page, page_size: pageSize } });
+  return { items: data?.items || [], total: data?.total || 0 };
 }
 
 export async function createRoughCutProject(payload) {
