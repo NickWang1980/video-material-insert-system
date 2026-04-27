@@ -1,4 +1,4 @@
-import { api } from "./index";
+import { api, withAuthToken } from "./index";
 
 export async function listMaterials(params = {}) {
   const { data } = await api.get("/materials", { params });
@@ -70,5 +70,5 @@ export async function deleteMaterial(id) {
 }
 
 export function previewUrl(id) {
-  return `/api/materials/${id}/preview`;
+  return withAuthToken(`/api/materials/${id}/preview`);
 }

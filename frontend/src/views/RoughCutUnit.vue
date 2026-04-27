@@ -10,8 +10,6 @@
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <el-button type="primary" @click="openCreateDialog">新建混剪项目</el-button>
-          <el-button :disabled="!project" @click="openRenameDialog">重命名</el-button>
-          <el-button :disabled="!project" type="danger" plain @click="removeProject(project)">删除项目</el-button>
         </div>
       </div>
 
@@ -46,6 +44,22 @@
             <span>素材 {{ item.assetCount || 0 }}</span>
             <span>进度 {{ Number(item.pipelineProgress || 0) }}%</span>
           </div>
+          <div class="mt-3 flex items-center justify-between gap-2" @click.stop>
+            <div>
+              <el-button
+                v-if="item.stageSummary === 'timeline_ready'"
+                size="small"
+                :loading="exportingStoryboardId === item.id"
+                @click="handleCardExportStoryboard(item.id)"
+              >
+                导出时间线
+              </el-button>
+            </div>
+            <div v-if="currentProjectId === item.id" class="flex items-center gap-1.5">
+              <el-button size="small" @click="openRenameDialog">重命名</el-button>
+              <el-button size="small" type="danger" plain @click="removeProject(project)">删除项目</el-button>
+            </div>
+          </div>
         </button>
       </div>
       <el-empty v-else class="mt-4" description="暂无混剪项目" />
@@ -77,21 +91,20 @@
             上传带角色前缀的口播文案 TXT。格式必须包含 `A:`、`B:`、`C:` 这类角色行。
           </p>
         </div>
-        <div class="min-w-[220px] rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
-          <div class="font-medium">{{ project.title }}</div>
-          <div class="mt-1 text-xs text-gray-500">{{ project.scriptFileName || "未绑定剧本文件" }}</div>
-          <div class="mt-3 flex items-center justify-between text-xs text-gray-500">
-            <span>角色数</span>
-            <span>{{ roles.length }}</span>
+        <div class="flex flex-col gap-2">
+          <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm">
+            <div class="font-medium leading-snug">{{ project.title }}</div>
+            <div class="mt-0.5 text-xs text-gray-500">{{ project.scriptFileName || "未绑定剧本文件" }}</div>
           </div>
-          <div class="mt-1 flex items-center justify-between text-xs text-gray-500">
-            <span>分镜数</span>
-            <span>{{ sentences.length }}</span>
+          <div class="flex items-center gap-4 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-600">
+            <span>角色数 <span class="ml-1 font-semibold text-gray-900">{{ roles.length }}</span></span>
+            <span class="text-gray-300">|</span>
+            <span>分镜数 <span class="ml-1 font-semibold text-gray-900">{{ sentences.length }}</span></span>
           </div>
         </div>
       </div>
 
-      <div class="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div class="mt-5 grid gap-4 xl:grid-cols-[30%_70%]">
         <div class="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4">
           <el-upload
             drag
@@ -120,7 +133,7 @@
             :stroke-width="14"
             :class="loading.script ? 'progress-breathing' : ''"
           />
-          <div class="mt-4 max-h-48 overflow-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm leading-6 text-gray-700">
+          <div class="mt-4 max-h-48 overflow-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm leading-6 text-gray-700 whitespace-pre-wrap">
             {{ project.script || "上传后显示剧本文本预览。" }}
           </div>
         </div>
@@ -141,19 +154,30 @@
             每个角色卡片独立接收视频素材。拖拽后自动上传、自动 ASR、自动计算匹配率。
           </p>
         </div>
-        <div class="min-w-[260px] rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
-          <div class="flex items-center justify-between text-sm font-medium">
-            <span>角色识别总进度</span>
-            <span>{{ roleStageProgress }}%</span>
+        <div class="min-w-[260px] space-y-2">
+          <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+            <div class="flex items-center justify-between text-sm font-medium">
+              <span>角色识别总进度</span>
+              <span>{{ roleStageProgress }}%</span>
+            </div>
+            <el-progress
+              class="mt-3"
+              :percentage="roleStageProgress"
+              :stroke-width="14"
+              :class="hasAsrRunning ? 'progress-breathing' : ''"
+            />
+            <div class="mt-3 text-xs text-gray-500">
+              所有角色全部素材完成识别且通过门槛后，将自动生成时间线并开始预览版混剪。
+            </div>
           </div>
-          <el-progress
-            class="mt-3"
-            :percentage="roleStageProgress"
-            :stroke-width="14"
-            :class="hasAsrRunning ? 'progress-breathing' : ''"
-          />
-          <div class="mt-3 text-xs text-gray-500">
-            所有角色全部素材完成识别且通过门槛后，将自动生成时间线并开始预览版混剪。
+          <div v-if="asrGlobalStatus.totalActive > 0" class="flex flex-wrap items-center gap-2 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2">
+            <el-tag size="small" type="warning">
+              ASR 识别中 {{ asrGlobalStatus.runningCount }}/{{ asrGlobalStatus.maxConcurrent }}
+              <span v-if="asrGlobalStatus.queuedCount"> · 排队 {{ asrGlobalStatus.queuedCount }}</span>
+            </el-tag>
+            <span class="text-xs text-gray-400">
+              模型：{{ asrGlobalStatus.loadedModels.length ? asrGlobalStatus.loadedModels.join(", ") : "加载中…" }}
+            </span>
           </div>
         </div>
       </div>
@@ -185,21 +209,31 @@
             :class="roleIsRunning(role.id) ? 'progress-breathing' : ''"
           />
 
-          <div class="mt-4 rounded-2xl border border-dashed border-gray-300 bg-white p-3">
+          <div
+            class="mt-4 rounded-2xl border border-dashed p-3 transition-colors"
+            :class="isRoleUploadLocked(role.id)
+              ? 'border-gray-200 bg-gray-100 opacity-50 cursor-not-allowed'
+              : 'border-gray-300 bg-white'"
+          >
             <el-upload
+              v-if="!isRoleUploadLocked(role.id)"
               drag
               :auto-upload="false"
-              :multiple="true"
+              :multiple="false"
               :show-file-list="false"
               accept="video/*"
               class="w-full"
               @change="(file) => onRoleAssetSelected(role.id, file)"
             >
-              <div class="py-6 text-center">
+              <div class="py-3 text-center">
                 <div class="text-sm font-semibold">拖拽或选择 {{ role.id }} 角色视频</div>
-                <div class="mt-2 text-xs text-gray-500">选择后自动上传并开始异步 ASR 识别</div>
+                <div class="mt-1 text-xs text-gray-500">选择后自动上传并开始异步 ASR 识别</div>
               </div>
             </el-upload>
+            <div v-else class="py-3 text-center">
+              <div class="text-sm font-semibold text-gray-400">等待角色 {{ prevRoleId(role.id) }} ASR 识别完成</div>
+              <div class="mt-1 text-xs text-gray-400">上一角色 ASR 成功后自动解锁</div>
+            </div>
           </div>
 
           <div class="mt-4 space-y-3" v-if="roleAssets(role.id).length">
@@ -214,8 +248,20 @@
                   <div class="mt-1 text-xs text-gray-500">
                     {{ formatSeconds(asset.duration) }} · {{ asset.width }}x{{ asset.height }}
                   </div>
-                  <div class="mt-1 text-xs text-gray-500">
-                    ASR {{ asset.asrStatus || "pending" }} · {{ Number(asset.asrProgress || 0) }}%
+                  <div class="mt-1 flex items-center gap-1.5 text-xs">
+                    <span
+                      class="inline-block rounded-full px-1.5 py-0.5 font-medium"
+                      :class="{
+                        'bg-gray-100 text-gray-500': !asset.asrStatus || asset.asrStatus === 'pending',
+                        'bg-blue-100 text-blue-600': asset.asrStatus === 'queued',
+                        'bg-yellow-100 text-yellow-700': asset.asrStatus === 'running',
+                        'bg-green-100 text-green-700': asset.asrStatus === 'completed',
+                        'bg-red-100 text-red-600': asset.asrStatus === 'failed',
+                      }"
+                    >
+                      {{ { pending: '等待', queued: '排队中', running: '识别中', completed: '已完成', failed: '失败' }[asset.asrStatus] || asset.asrStatus }}
+                    </span>
+                    <span class="text-gray-400">{{ Number(asset.asrProgress || 0) }}%</span>
                   </div>
                   <div class="mt-1 text-xs text-gray-500">
                     匹配率 {{ formatPercent(asset.matchPercent) }}% · 手动通过 {{ asset.manualGatePassed ? "是" : "否" }}
@@ -259,19 +305,41 @@
     >
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-3">
             <span class="rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">步骤 3 / 4</span>
             <h2 class="text-lg font-semibold">分镜头列表（句子卡片）</h2>
+            <el-button
+              size="small"
+              :loading="loading.exportStoryboard"
+              :disabled="!timeline.length"
+              @click="handleExportStoryboard"
+            >
+              导出分镜时序
+            </el-button>
+            <el-button
+              size="small"
+              :loading="loading.importStoryboard"
+              @click="triggerStoryboardImport"
+            >
+              导入分镜时序
+            </el-button>
+            <input
+              ref="storyboardImportInputRef"
+              type="file"
+              accept=".json,application/json"
+              style="display:none"
+              @change="handleStoryboardImportFile"
+            />
           </div>
           <p class="mt-2 text-sm text-gray-500">
             分镜头由剧本文案自动拆出，时长由匹配到的角色视频 ASR 片段决定；可折叠查看并逐句调整。
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <el-button text @click="storyboardCollapsed = !storyboardCollapsed">
-            {{ storyboardCollapsed ? "展开分镜头区域" : "折叠分镜头区域" }}
+          <el-button text size="small" @click="storyboardCollapsed = !storyboardCollapsed">
+            {{ storyboardCollapsed ? "展开" : "折叠" }}
           </el-button>
-          <div class="min-w-[220px]">
+          <div class="min-w-[180px]">
             <el-progress
               :percentage="storyboardProgress"
               :stroke-width="12"
@@ -285,7 +353,8 @@
         <article
           v-for="sentence in sentences"
           :key="sentence.id"
-          class="rounded-2xl border border-gray-200 bg-gray-50 p-4 shadow-sm"
+          class="rounded-2xl border border-gray-200 p-4 shadow-sm"
+          :style="{ backgroundColor: sentenceCardBg(sentence.roleId) }"
         >
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-center gap-2 text-xs text-gray-500">
@@ -413,7 +482,7 @@
             :disabled="!project || !project.previewUrl"
             @click="exportFinal"
           >
-            导出最终 MP4
+            导出视频
           </el-button>
           <el-tag :type="ffmpegStatus === 'blocked' ? 'danger' : 'success'">
             FFmpeg {{ ffmpegStatus === 'blocked' ? '阻塞' : '通畅' }}
@@ -458,7 +527,7 @@
                 :src="currentMediaUrl"
                 controls
                 preload="metadata"
-                class="mx-auto aspect-[9/16] max-h-[72vh] w-full bg-black object-contain"
+                :class="['mx-auto aspect-[9/16] w-full bg-black object-contain', allAsrCompleted ? 'max-h-[36vh]' : 'max-h-[72vh]']"
                 @timeupdate="onVideoTimeUpdate"
                 @loadedmetadata="onVideoLoadedMetadata"
               />
@@ -675,6 +744,7 @@ import {
   getRoughCutAssetMediaUrl,
   getRoughCutProject,
   getRoughCutProjectCompare,
+  getRoughCutAsrStatus,
   getRoughCutFfmpegStatus,
   getRoughCutStatus,
   getRoughCutMediaUrl,
@@ -688,6 +758,8 @@ import {
   previewRoughCutSentence,
   getSentencePreviewUrl,
   uploadRoughCutAssets,
+  exportRoughCutStoryboard,
+  importRoughCutStoryboard,
 } from "../api/roughCut";
 
 const projects = ref([]);
@@ -709,6 +781,8 @@ const loading = reactive({
   regenerate: false,
   stopPreview: false,
   exportFinal: false,
+  exportStoryboard: false,
+  importStoryboard: false,
 });
 
 const sentenceLoading = reactive({});
@@ -718,6 +792,7 @@ const sentencePreviewUrls = reactive({});
 const assetActionLoading = reactive({});
 const ffmpegStatus = ref("clear");
 const ffmpegRunningCount = ref(0);
+const asrGlobalStatus = ref({ runningCount: 0, queuedCount: 0, maxConcurrent: 2, totalActive: 0, loadedModels: [] });
 const ffmpegBlockedProjectIds = ref([]);
 const ffmpegLoading = ref(false);
 const ffmpegClearing = ref(false);
@@ -757,6 +832,9 @@ const totalTimelineSeconds = computed(() => {
 const pipelineProgress = computed(() => Number(project.value?.pipelineProgress || project.value?.progress || 0));
 const hasAsrRunning = computed(() =>
   assets.value.some((item) => ["pending", "running"].includes(String(item.asrStatus || "").toLowerCase()))
+);
+const allAsrCompleted = computed(() =>
+  assets.value.length > 0 && assets.value.every((a) => a.asrStatus === "completed")
 );
 const roleStageProgress = computed(() => {
   const rows = Array.isArray(project.value?.rolesAsrProgress) ? project.value.rolesAsrProgress : [];
@@ -991,7 +1069,7 @@ async function loadProject(projectId) {
   if (!projectId) return;
   project.value = await getRoughCutProject(projectId);
   syncAfterProjectUpdate();
-  await refreshFfmpegStatus();
+  await Promise.all([refreshFfmpegStatus(), refreshAsrStatus()]);
   startStatusPolling();
 }
 
@@ -1019,6 +1097,15 @@ async function refreshFfmpegStatus() {
   }
 }
 
+async function refreshAsrStatus() {
+  try {
+    const result = await getRoughCutAsrStatus();
+    asrGlobalStatus.value = result || asrGlobalStatus.value;
+  } catch {
+    // silently ignore
+  }
+}
+
 async function clearFfmpegBlockedProcesses() {
   if (ffmpegClearing.value) return;
   ffmpegClearing.value = true;
@@ -1036,6 +1123,19 @@ async function clearFfmpegBlockedProcesses() {
 
 function roleAssets(roleId) {
   return assets.value.filter((item) => item.roleId === roleId);
+}
+
+function isRoleUploadLocked(roleId) {
+  const idx = roles.value.findIndex((r) => r.id === roleId);
+  if (idx <= 0) return false;
+  const prevId = roles.value[idx - 1].id;
+  // Locked until the previous role has at least one asset that completed ASR
+  return !roleAssets(prevId).some((a) => a.asrStatus === "completed");
+}
+
+function prevRoleId(roleId) {
+  const idx = roles.value.findIndex((r) => r.id === roleId);
+  return idx > 0 ? roles.value[idx - 1].id : null;
 }
 
 function roleProgressItem(roleId) {
@@ -1080,6 +1180,71 @@ function roleIsRunning(roleId) {
 
 function roleColor(roleId) {
   return roles.value.find((item) => item.id === roleId)?.color || "#111827";
+}
+
+// ── Sentence card background palette (3 themes × 8 hues) ──────────────────
+const _SENTENCE_BG_PALETTES = {
+  light: [
+    "#ede9fe", // violet
+    "#dbeafe", // sky blue
+    "#d1fae5", // mint green
+    "#fce7f3", // rose
+    "#fef3c7", // amber
+    "#cffafe", // cyan
+    "#e0e7ff", // indigo
+    "#fee2e2", // blush red
+  ],
+  dark: [
+    "#2d1f5e", // deep violet
+    "#1e3a5f", // deep navy blue
+    "#1a3a2e", // deep forest green
+    "#3d1a2e", // deep wine rose
+    "#3d2e0e", // deep amber
+    "#0e3040", // deep teal
+    "#1e1a4a", // deep indigo
+    "#3d1a1a", // deep crimson
+  ],
+  glass: [
+    "rgba(139, 92, 246, 0.22)",  // violet glass
+    "rgba(59, 130, 246, 0.20)",  // blue glass
+    "rgba(16, 185, 129, 0.18)",  // emerald glass
+    "rgba(236, 72, 153, 0.18)",  // pink glass
+    "rgba(245, 158, 11, 0.18)",  // amber glass
+    "rgba(6, 182, 212, 0.18)",   // cyan glass
+    "rgba(99, 102, 241, 0.22)",  // indigo glass
+    "rgba(239, 68, 68, 0.18)",   // red glass
+  ],
+};
+
+// Reactive theme detection — mirrors App.vue's html class changes
+const _currentTheme = ref(
+  document.documentElement.classList.contains("glass")
+    ? "glass"
+    : document.documentElement.classList.contains("dark")
+    ? "dark"
+    : "light"
+);
+let _themeObserver = null;
+onMounted(() => {
+  _themeObserver = new MutationObserver(() => {
+    const cl = document.documentElement.classList;
+    _currentTheme.value = cl.contains("glass") ? "glass" : cl.contains("dark") ? "dark" : "light";
+  });
+  _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+});
+onBeforeUnmount(() => _themeObserver?.disconnect());
+
+// Map each roleId to a stable hue index in order of first appearance
+const _roleHueIndex = computed(() => {
+  const map = {};
+  roles.value.forEach((r, i) => { map[r.id] = i; });
+  return map;
+});
+
+function sentenceCardBg(roleId) {
+  const palette = _SENTENCE_BG_PALETTES[_currentTheme.value] ?? _SENTENCE_BG_PALETTES.light;
+  const idx = _roleHueIndex.value[roleId] ?? 0;
+  return palette[idx % palette.length];
 }
 
 async function onRoleAssetSelected(roleId, file) {
@@ -1236,22 +1401,87 @@ async function stopPreviewGeneration() {
   }
 }
 
-async function exportFinal() {
+const storyboardImportInputRef = ref(null);
+const exportingStoryboardId = ref(null);
+
+async function handleCardExportStoryboard(projectId) {
+  exportingStoryboardId.value = projectId;
+  try {
+    await exportRoughCutStoryboard(projectId);
+    ElMessage.success("分镜头时序已导出");
+  } catch (e) {
+    ElMessage.error(e.message || "导出失败");
+  } finally {
+    exportingStoryboardId.value = null;
+  }
+}
+
+async function handleExportStoryboard() {
   if (!project.value?.id) return;
+  loading.exportStoryboard = true;
+  try {
+    await exportRoughCutStoryboard(project.value.id);
+    ElMessage.success("分镜头时序已导出");
+  } catch (e) {
+    ElMessage.error(e.message || "导出失败");
+  } finally {
+    loading.exportStoryboard = false;
+  }
+}
+
+function triggerStoryboardImport() {
+  if (!project.value?.id) return;
+  storyboardImportInputRef.value?.click();
+}
+
+async function handleStoryboardImportFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file || !project.value?.id) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${file.name}」导入到工程「${project.value.title}」？\n当前分镜时序将被覆盖。`,
+      "导入分镜时序",
+      { type: "warning", confirmButtonText: "确认导入", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+
+  loading.importStoryboard = true;
+  try {
+    project.value = await importRoughCutStoryboard(project.value.id, file);
+    project.value = await buildRoughCutTimeline(project.value.id, true);
+    syncAfterProjectUpdate();
+    ElMessage.success("分镜时序已导入并重新取材");
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message || "导入失败");
+  } finally {
+    loading.importStoryboard = false;
+  }
+}
+
+async function exportFinal() {
+  if (!project.value?.id || !project.value?.previewUrl) return;
   loading.exportFinal = true;
   try {
-    await syncAllSentencesBeforeRender();
-    await exportRoughCutProject(project.value.id, "final");
-    project.value = {
-      ...project.value,
-      status: "processing",
-      phase: "render_final",
-      progress: Math.max(Number(project.value?.progress || 0), 65),
-    };
-    startStatusPolling();
-    ElMessage.success("MP4 导出任务已启动");
+    const token = localStorage.getItem("vmis_token") || "";
+    const url = getRoughCutMediaUrl(project.value.id, "preview");
+    const resp = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!resp.ok) throw new Error("视频获取失败");
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${project.value.title || "混剪视频"}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    ElMessage.success("视频已开始下载");
   } catch (error) {
-    ElMessage.error(error.message || "导出 MP4 失败");
+    ElMessage.error(error.message || "视频导出失败");
   } finally {
     loading.exportFinal = false;
   }
@@ -1372,7 +1602,8 @@ async function previewSentence(sentence) {
   delete sentencePreviewUrls[sentence.id];
   try {
     await previewRoughCutSentence(project.value.id, sentence.id);
-    sentencePreviewUrls[sentence.id] = getSentencePreviewUrl(project.value.id, sentence.id) + `?t=${Date.now()}`;
+    const _previewBase = getSentencePreviewUrl(project.value.id, sentence.id);
+    sentencePreviewUrls[sentence.id] = _previewBase + (_previewBase.includes("?") ? "&" : "?") + `t=${Date.now()}`;
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || error.message || "单句预览生成失败");
   } finally {
@@ -1426,7 +1657,7 @@ function onTimelineSliderChange(value) {
 function shouldPollProject() {
   if (!project.value?.id) return false;
   if (project.value.status === "processing") return true;
-  return assets.value.some((item) => ["pending", "running"].includes(String(item.asrStatus || "").toLowerCase()));
+  return assets.value.some((item) => ["pending", "queued", "running"].includes(String(item.asrStatus || "").toLowerCase()));
 }
 
 async function pollProjectStatus() {
@@ -1435,7 +1666,7 @@ async function pollProjectStatus() {
     const latest = await getRoughCutProject(project.value.id);
     project.value = latest;
     syncAfterProjectUpdate();
-    await refreshFfmpegStatus();
+    await Promise.all([refreshFfmpegStatus(), refreshAsrStatus()]);
     if (compareDialog.visible) {
       await refreshCompareData();
     }

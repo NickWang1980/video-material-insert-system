@@ -233,6 +233,14 @@ class FfmpegStatusResponse(BaseModel):
     blockedProjectIds: list[int] = Field(default_factory=list)
 
 
+class AsrStatusResponse(BaseModel):
+    runningCount: int = 0
+    queuedCount: int = 0
+    maxConcurrent: int = 2
+    totalActive: int = 0
+    loadedModels: list[str] = Field(default_factory=list)
+
+
 class ListProjectsResponse(BaseModel):
     items: list[RoughCutProjectResponse] = Field(default_factory=list)
     total: int = 0

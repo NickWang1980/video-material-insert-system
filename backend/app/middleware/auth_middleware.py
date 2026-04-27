@@ -29,7 +29,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return JSONResponse({"detail": "未登录或会话已过期"}, status_code=401)
+            # For GET requests, accept token via ?token= query param.
+            # Browsers cannot send custom headers with <a href>, window.open,
+            # <video src>, <img src> — all direct-download / media-play paths need this.
+            if request.method == "GET":
+                token_param = request.query_params.get("token", "")
+                if token_param:
+                    auth_header = f"Bearer {token_param}"
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse({"detail": "未登录或会话已过期"}, status_code=401)
 
         token = auth_header[7:]
         settings = get_settings()

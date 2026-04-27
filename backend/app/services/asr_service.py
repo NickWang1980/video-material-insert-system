@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -19,10 +20,71 @@ _asr_lock = threading.Lock()
 DEFAULT_ASR_RETRY_MAX = 3
 _opencc_converter = None
 
+# Shared WhisperModel cache — one instance per model name, reused across all callers.
+# Uses a loading-event dict so the main lock is never held during the slow WhisperModel()
+# constructor, which could block API status queries for minutes.
+_whisper_model_cache: dict[str, object] = {}
+_whisper_loading_events: dict[str, threading.Event] = {}
+_whisper_model_cache_lock = threading.Lock()
+
+
+def _get_or_load_whisper_model(model_name: str):
+    with _whisper_model_cache_lock:
+        if model_name in _whisper_model_cache:
+            return _whisper_model_cache[model_name]
+        if model_name in _whisper_loading_events:
+            event = _whisper_loading_events[model_name]
+            should_load = False
+        else:
+            event = threading.Event()
+            _whisper_loading_events[model_name] = event
+            should_load = True
+
+    if not should_load:
+        event.wait()
+        with _whisper_model_cache_lock:
+            if model_name in _whisper_model_cache:
+                return _whisper_model_cache[model_name]
+        raise RuntimeError(f"ASR 模型 {model_name!r} 加载失败，请重试")
+
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as exc:
+        with _whisper_model_cache_lock:
+            _whisper_loading_events.pop(model_name, None)
+        event.set()
+        raise RuntimeError("faster-whisper 未安装或加载失败") from exc
+
+    try:
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    except Exception:
+        with _whisper_model_cache_lock:
+            _whisper_loading_events.pop(model_name, None)
+        event.set()
+        raise
+
+    with _whisper_model_cache_lock:
+        _whisper_model_cache[model_name] = model
+        _whisper_loading_events.pop(model_name, None)
+    event.set()
+    return model
+
+
+def get_loaded_asr_models() -> list[str]:
+    with _whisper_model_cache_lock:
+        return list(_whisper_model_cache.keys())
+
 
 def _normalize_asr_model(asr_model: str | None) -> str:
     value = (asr_model or "small").strip().lower()
     return value if value in {"small", "medium"} else "small"
+
+
+def _resolve_model_path(model_name: str, data_dir: Path) -> str:
+    local_dir = data_dir / "asr_models" / f"faster-whisper-{model_name}"
+    if (local_dir / "model.bin").exists():
+        return str(local_dir)
+    return model_name
 
 
 def _normalize_retry_max(value: int | None) -> int:
@@ -119,7 +181,8 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
 
                 entry.asr_progress = 45
                 db.commit()
-                segments = transcribe_audio_segments(audio_path=audio_path, model_name=asr_model)
+                model_path = _resolve_model_path(asr_model, settings.data_dir)
+                segments = transcribe_audio_segments(audio_path=audio_path, model_name=model_path)
                 entry.asr_progress = 75
                 db.commit()
 
@@ -133,6 +196,7 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
                     / output_file_name
                 )
                 write_segments_to_srt(output_path=output_path, segments=segments)
+                write_words_to_json(srt_path=output_path, segments=segments)
                 entry.asr_progress = 90
                 db.commit()
                 parsed = parse_srt(str(output_path), encoding="utf-8", time_offset_seconds=0.0)
@@ -221,17 +285,13 @@ def _to_simplified_chinese(text: str) -> str:
 
 
 def transcribe_audio_segments(*, audio_path: str, model_name: str) -> list[dict]:
-    try:
-        from faster_whisper import WhisperModel
-    except Exception as exc:  # pragma: no cover - import failure branch
-        raise RuntimeError("faster-whisper 未安装或加载失败") from exc
-
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    model = _get_or_load_whisper_model(model_name)
     segments, _ = model.transcribe(
         audio_path,
         vad_filter=True,
         language="zh",
         task="transcribe",
+        word_timestamps=True,
     )
 
     normalized: list[dict] = []
@@ -242,7 +302,16 @@ def transcribe_audio_segments(*, audio_path: str, model_name: str) -> list[dict]
         text = _to_simplified_chinese(text)
         start = max(0.0, float(getattr(segment, "start", 0.0) or 0.0))
         end = max(start + 0.01, float(getattr(segment, "end", start + 0.01) or (start + 0.01)))
-        normalized.append({"start": start, "end": end, "text": text})
+        words_data: list[dict] = []
+        for w in getattr(segment, "words", None) or []:
+            word_text = _to_simplified_chinese((w.word or "").strip())
+            if word_text:
+                words_data.append({
+                    "word": word_text,
+                    "start": max(0.0, float(w.start)),
+                    "end": max(0.0, float(w.end)),
+                })
+        normalized.append({"start": start, "end": end, "text": text, "words": words_data})
     return normalized
 
 
@@ -264,3 +333,15 @@ def write_segments_to_srt(*, output_path: Path, segments: list[dict]) -> None:
                 f"{_format_srt_time(seg['start'])} --> {_format_srt_time(seg['end'])}\n"
             )
             file_handle.write(f"{seg['text']}\n\n")
+
+
+def write_words_to_json(*, srt_path: Path, segments: list[dict]) -> None:
+    all_words = sorted(
+        [w for seg in segments for w in seg.get("words", [])],
+        key=lambda x: x["start"],
+    )
+    words_path = srt_path.with_suffix(".words.json")
+    words_path.write_text(
+        json.dumps({"version": 1, "words": all_words}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )

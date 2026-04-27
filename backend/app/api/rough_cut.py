@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from ..config import Settings
@@ -16,6 +20,7 @@ from ..schemas.rough_cut import (
     CompareProjectResponse,
     CreateProjectRequest,
     ExportRequest,
+    AsrStatusResponse,
     FfmpegStatusResponse,
     ListProjectsResponse,
     RoleAsset,
@@ -51,6 +56,9 @@ from ..services.rough_cut_service import (
     update_sentence,
     get_ffmpeg_health_status,
     clear_blocked_rough_cut_processes,
+    export_storyboard_payload,
+    import_storyboard,
+    get_asr_global_status,
 )
 
 
@@ -186,6 +194,11 @@ async def api_ffmpeg_status(
     db: Session = Depends(get_db),
 ):
     return get_ffmpeg_health_status(db)
+
+
+@router.get("/asr/status", response_model=AsrStatusResponse)
+async def api_asr_status():
+    return get_asr_global_status()
 
 
 @router.post("/ffmpeg/clear", response_model=MessageResponse)
@@ -459,9 +472,15 @@ async def api_sentence_preview(
 ):
     project = _safe_get_project(db, project_id)
     try:
-        render_sentence_preview(settings, project, sentence_id)
-    except ValueError as exc:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: render_sentence_preview(settings, project, sentence_id),
+        )
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"单句预览生成失败：{exc}") from exc
     return {"ok": True}
 
 
@@ -482,3 +501,34 @@ async def api_sentence_preview_media(
     if not out_file.exists():
         raise HTTPException(status_code=404, detail="单句预览不存在，请先点击预览。")
     return FileResponse(str(out_file), filename=f"preview_{sentence_id}.mp4", media_type="video/mp4")
+
+
+@router.get("/projects/{project_id}/storyboard-export")
+async def api_storyboard_export(project_id: int, db: Session = Depends(get_db)):
+    project = _safe_get_project(db, project_id)
+    payload = export_storyboard_payload(project)
+    json_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename = f"分镜头时序导出文件_{today}.json"
+    return Response(
+        content=json_bytes,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/projects/{project_id}/storyboard-import", response_model=RoughCutProjectResponse)
+async def api_storyboard_import(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    project = _safe_get_project(db, project_id)
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="导入文件过大（上限 10MB）。")
+    try:
+        project = import_storyboard(db, project, raw_json=raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _serialize_project(project)

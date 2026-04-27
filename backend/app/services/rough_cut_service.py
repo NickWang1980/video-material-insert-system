@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,7 +19,7 @@ from ..models.rough_cut_project import RoughCutProject
 from ..models.settings import SettingsRow
 from ..models.database import SessionLocal
 from ..schemas.rough_cut import RenderSettings
-from .asr_service import transcribe_audio_segments, write_segments_to_srt
+from .asr_service import transcribe_audio_segments, write_segments_to_srt, _resolve_model_path
 from .subtitle_service import parse_srt
 from .video_service import probe_video
 
@@ -48,10 +48,17 @@ _rough_cut_control_lock = threading.Lock()
 _running_rough_cut_processes: dict[int, subprocess.Popen] = {}
 _stop_requested_rough_cut_projects: set[int] = set()
 _rough_cut_asr_lock = threading.Lock()
-_running_rough_cut_asset_jobs: set[str] = set()
+_running_rough_cut_asset_jobs: set[str] = set()  # all active job keys (queued + running)
+_ASR_MAX_CONCURRENT = 2                           # max simultaneous transcriptions
+_asr_transcription_sem = threading.Semaphore(_ASR_MAX_CONCURRENT)
+_asr_queued_jobs: set[str] = set()               # job keys waiting for semaphore slot
+_asr_queued_lock = threading.Lock()
 _auto_preview_lock = threading.Lock()
 _auto_preview_projects: set[int] = set()
 _auto_preview_signatures: dict[int, str] = {}
+# Serialises all read-modify-write operations on assets_json so concurrent ASR
+# jobs for different roles cannot overwrite each other's progress updates.
+_assets_write_lock = threading.Lock()
 
 _zh_opencc_converter = None
 _PUNCTUATION_CATEGORIES = {"Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sm", "Sc", "Sk", "So"}
@@ -2084,18 +2091,21 @@ def _update_project_asset(
     asset_id: str,
     patch: dict,
 ) -> tuple[RoughCutProject, dict]:
-    assets = [_ensure_asset_defaults(item) for item in _safe_json_loads(project.assets_json, [])]
-    target: dict | None = None
-    for asset in assets:
-        if str(asset.get("id") or "").strip() == asset_id:
-            asset.update(patch or {})
-            target = asset
-            break
-    if target is None:
-        raise ValueError("角色素材不存在。")
-    project.assets_json = _safe_json_dumps(assets)
-    db.commit()
-    db.refresh(project)
+    with _assets_write_lock:
+        # Always re-read from DB so concurrent ASR jobs don't overwrite each other
+        db.refresh(project)
+        assets = [_ensure_asset_defaults(item) for item in _safe_json_loads(project.assets_json, [])]
+        target: dict | None = None
+        for asset in assets:
+            if str(asset.get("id") or "").strip() == asset_id:
+                asset.update(patch or {})
+                target = asset
+                break
+        if target is None:
+            raise ValueError("角色素材不存在。")
+        project.assets_json = _safe_json_dumps(assets)
+        db.commit()
+        db.refresh(project)
     return project, target
 
 
@@ -2142,9 +2152,34 @@ def schedule_asr_for_rough_cut_asset(settings: Settings, *, project_id: int, ass
     thread.start()
 
 
+def _try_rebuild_timeline_after_asr(db: Session, project_id: int) -> None:
+    """Rebuild timeline immediately after any ASR completion so the UI timeline bar
+    appears as soon as clip timings are known, independently of gate pass status."""
+    try:
+        project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
+        if not project:
+            return
+        sentences = _safe_json_loads(project.sentences_json, [])
+        assets = _safe_json_loads(project.assets_json, [])
+        if not sentences or not assets:
+            return
+        # Only rebuild if at least one asset has completed ASR (has timing data)
+        any_completed = any(
+            str(a.get("asrStatus") or "") == "completed"
+            for a in assets
+        )
+        if not any_completed:
+            return
+        build_project_timeline(db, project, recalculate_durations=True)
+    except Exception:
+        pass
+
+
 def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: str) -> None:
     db = SessionLocal()
     job_key = _make_asset_job_key(project_id, asset_id)
+    acquired_sem = False
+    queued_added = False
     try:
         project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
         if not project:
@@ -2158,35 +2193,40 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
         source_path = str(asset.get("filePath") or "").strip()
         if not source_path or not Path(source_path).exists():
             _update_project_asset(
-                db,
-                project,
-                asset_id=asset_id,
-                patch={
-                    "asrStatus": "failed",
-                    "asrProgress": 100,
-                    "asrError": "素材文件不存在",
-                    "asrStartSeconds": 0.0,
-                    "asrEndSeconds": 0.0,
-                    "asrDuration": 0.0,
-                },
+                db, project, asset_id=asset_id,
+                patch={"asrStatus": "failed", "asrProgress": 100, "asrError": "素材文件不存在",
+                       "asrStartSeconds": 0.0, "asrEndSeconds": 0.0, "asrDuration": 0.0},
             )
             return
 
         asr_model = _get_system_asr_model(db)
-        _update_project_asset(
-            db,
-            project,
-            asset_id=asset_id,
-            patch={"asrStatus": "running", "asrProgress": 35, "asrError": None},
-        )
 
-        segments = transcribe_audio_segments(audio_path=source_path, model_name=asr_model)
-        _update_project_asset(
-            db,
-            project,
-            asset_id=asset_id,
-            patch={"asrStatus": "running", "asrProgress": 75},
-        )
+        # ── Queue phase: wait for a transcription slot ──────────────────────
+        with _asr_queued_lock:
+            _asr_queued_jobs.add(job_key)
+        queued_added = True
+        _update_project_asset(db, project, asset_id=asset_id,
+                               patch={"asrStatus": "queued", "asrProgress": 15, "asrError": None})
+
+        _asr_transcription_sem.acquire()
+        acquired_sem = True
+        with _asr_queued_lock:
+            _asr_queued_jobs.discard(job_key)
+        queued_added = False
+
+        # Re-fetch project in case it was modified while we waited
+        project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
+        if not project:
+            return
+
+        # ── Transcription phase ─────────────────────────────────────────────
+        _update_project_asset(db, project, asset_id=asset_id,
+                               patch={"asrStatus": "running", "asrProgress": 35, "asrError": None})
+
+        model_path = _resolve_model_path(asr_model, settings.data_dir)
+        segments = transcribe_audio_segments(audio_path=source_path, model_name=model_path)
+        _update_project_asset(db, project, asset_id=asset_id,
+                               patch={"asrStatus": "running", "asrProgress": 75})
 
         output_dir = settings.data_dir / "uploads" / "rough_cut_subtitles" / f"project_{project_id}"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2197,19 +2237,11 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
         parsed_segments = _parse_asr_segments_from_path(output_path.as_posix())
         asr_start_seconds, asr_end_seconds, asr_duration = _calculate_asr_time_range(parsed_segments)
         _update_project_asset(
-            db,
-            project,
-            asset_id=asset_id,
-            patch={
-                "asrStatus": "completed",
-                "asrProgress": 100,
-                "asrError": None,
-                "asrSrtPath": output_path.as_posix(),
-                "asrStartSeconds": asr_start_seconds,
-                "asrEndSeconds": asr_end_seconds,
-                "asrDuration": asr_duration,
-                "srtLineCount": len(parsed_segments),
-            },
+            db, project, asset_id=asset_id,
+            patch={"asrStatus": "completed", "asrProgress": 100, "asrError": None,
+                   "asrSrtPath": output_path.as_posix(),
+                   "asrStartSeconds": asr_start_seconds, "asrEndSeconds": asr_end_seconds,
+                   "asrDuration": asr_duration, "srtLineCount": len(parsed_segments)},
         )
         project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
         if project:
@@ -2217,23 +2249,18 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
             if refresh_sentence_durations_from_asr(project):
                 _append_log(project, "ASR 识别完成后已刷新句子时长。")
             db.commit()
+        # Always try to rebuild the timeline so the timeline bar appears as soon
+        # as clip timings are known, even when the quality gate isn't passed yet.
+        _try_rebuild_timeline_after_asr(db, project_id)
         schedule_project_auto_preview(settings, project_id=project_id)
     except Exception as exc:
         project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
         if project:
             try:
                 _update_project_asset(
-                    db,
-                    project,
-                    asset_id=asset_id,
-                    patch={
-                        "asrStatus": "failed",
-                        "asrProgress": 100,
-                        "asrError": str(exc)[:500],
-                        "asrStartSeconds": 0.0,
-                        "asrEndSeconds": 0.0,
-                        "asrDuration": 0.0,
-                    },
+                    db, project, asset_id=asset_id,
+                    patch={"asrStatus": "failed", "asrProgress": 100, "asrError": str(exc)[:500],
+                           "asrStartSeconds": 0.0, "asrEndSeconds": 0.0, "asrDuration": 0.0},
                 )
                 project = db.query(RoughCutProject).filter(RoughCutProject.id == project_id).first()
                 if project:
@@ -2242,9 +2269,31 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
             except Exception:
                 pass
     finally:
+        if acquired_sem:
+            _asr_transcription_sem.release()
+        if queued_added:
+            with _asr_queued_lock:
+                _asr_queued_jobs.discard(job_key)
         with _rough_cut_asr_lock:
             _running_rough_cut_asset_jobs.discard(job_key)
         db.close()
+
+
+def get_asr_global_status() -> dict:
+    from .asr_service import get_loaded_asr_models
+    with _rough_cut_asr_lock:
+        all_active = set(_running_rough_cut_asset_jobs)
+    with _asr_queued_lock:
+        queued = set(_asr_queued_jobs)
+    running_count = len(all_active - queued)
+    queued_count = len(queued)
+    return {
+        "runningCount": running_count,
+        "queuedCount": queued_count,
+        "maxConcurrent": _ASR_MAX_CONCURRENT,
+        "totalActive": len(all_active),
+        "loadedModels": get_loaded_asr_models(),
+    }
 
 
 def is_rough_cut_enabled(project: RoughCutProject) -> tuple[bool, str]:
@@ -2634,6 +2683,58 @@ def set_asset_manual_gate(
         project,
         f"素材 {target.get('fileName', asset_id)} 手动通过已{'开启' if manual_passed else '关闭'}。",
     )
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def export_storyboard_payload(project: RoughCutProject) -> dict:
+    sentences = _safe_json_loads(project.sentences_json, [])
+    timeline = _safe_json_loads(project.timeline_json, [])
+    return {
+        "schemaVersion": "1.0",
+        "exportedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sourceProjectId": project.id,
+        "sourceProjectTitle": project.title or "",
+        "sentences": sentences,
+        "timeline": timeline,
+    }
+
+
+def import_storyboard(db, project: RoughCutProject, *, raw_json: bytes) -> RoughCutProject:
+    try:
+        payload = json.loads(raw_json.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError(f"JSON 解析失败：{exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("导入文件格式错误：根节点须为对象。")
+
+    sentences = payload.get("sentences")
+    timeline = payload.get("timeline")
+
+    if not isinstance(sentences, list):
+        raise ValueError("导入文件缺少有效的 sentences 字段。")
+    if not isinstance(timeline, list):
+        raise ValueError("导入文件缺少有效的 timeline 字段。")
+
+    missing_count = 0
+    for clip in timeline:
+        fp = str(clip.get("filePath") or "").strip()
+        if fp and not Path(fp).exists():
+            clip["filePath"] = ""
+            missing_count += 1
+
+    project.sentences_json = _safe_json_dumps(sentences)
+    project.timeline_json = _safe_json_dumps(timeline)
+    project.preview_path = None
+    project.output_path = None
+    project.status = ROUGH_CUT_STATUS_IDLE
+    project.progress = 0
+    project.phase = "storyboard_imported"
+    project.error_message = None
+    suffix = f"，{missing_count} 个素材路径失效" if missing_count else ""
+    _append_log(project, f"分镜头时序已导入（{len(sentences)} 句，{len(timeline)} 片段）{suffix}。")
     db.commit()
     db.refresh(project)
     return project

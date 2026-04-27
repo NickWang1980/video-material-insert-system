@@ -185,11 +185,40 @@ def _find_material_by_scope(
     return material, None
 
 
+def _find_keyword_time(keyword: str, sub: dict, words_index: list[dict] | None) -> float:
+    sub_start = float(sub.get("start_seconds", 0))
+    sub_end = float(sub.get("end_seconds", 0))
+    sub_text = sub.get("text") or ""
+
+    if words_index:
+        TOLERANCE = 0.5
+        candidates = [
+            w for w in words_index
+            if sub_start - TOLERANCE <= w["start"] < sub_end + TOLERANCE
+        ]
+        for win_size in range(1, len(candidates) + 1):
+            for i in range(len(candidates) - win_size + 1):
+                win = candidates[i : i + win_size]
+                combined = "".join(w["word"] for w in win)
+                if keyword in combined:
+                    prefix_pos = combined.index(keyword)
+                    win_dur = win[-1]["end"] - win[0]["start"]
+                    offset_in_win = (prefix_pos / max(len(combined), 1)) * win_dur
+                    return max(sub_start, win[0]["start"] + offset_in_win)
+
+    char_pos = sub_text.find(keyword)
+    if char_pos < 0 or not sub_text:
+        return sub_start
+    ratio = char_pos / len(sub_text)
+    return sub_start + ratio * max(0.0, sub_end - sub_start)
+
+
 def build_match_events(
     db: Session,
     subtitles: list[dict[str, Any]],
     config: list[dict[str, Any]],
     collision_priority_by_subtitle: dict[int, list[str]] | None = None,
+    words_index: list[dict] | None = None,
 ) -> list[MatchEvent]:
     events: list[MatchEvent] = []
     subtitle_layer_rank_map = _build_subtitle_layer_rank_map(
@@ -268,7 +297,7 @@ def build_match_events(
             if rank_map and keyword in rank_map:
                 layer_rank = int(rank_map[keyword])
 
-            start_time = float(sub.get("start_seconds", 0)) + offset
+            start_time = _find_keyword_time(keyword, sub, words_index) + offset
             base_end = float(sub.get("end_seconds", 0)) + offset
             if duration is None or duration == "":
                 end_time = base_end

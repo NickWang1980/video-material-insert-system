@@ -697,12 +697,29 @@ def process_task(settings: Settings, task_id: int) -> None:
                 _clear_stop_requested(task_id)
                 return
 
+            words_index = None
+            if (task.subtitle_source or "").strip().lower() == "asr":
+                words_json_path = Path(task.subtitle_path).with_suffix(".words.json")
+                if words_json_path.exists():
+                    try:
+                        payload = json.loads(words_json_path.read_text(encoding="utf-8"))
+                        words_index = payload.get("words") if isinstance(payload, dict) else None
+                        time_offset = float(settings_row.subtitle_time_offset_seconds)
+                        if words_index and time_offset:
+                            words_index = [
+                                {**w, "start": w["start"] + time_offset, "end": w["end"] + time_offset}
+                                for w in words_index
+                            ]
+                    except Exception:
+                        words_index = None
+
             collision_priority_by_subtitle = get_task_collision_priority(db, task.id)
             events = build_match_events(
                 db,
                 subtitles,
                 config_snapshot,
                 collision_priority_by_subtitle=collision_priority_by_subtitle,
+                words_index=words_index,
             )
             events = attach_random_sound_effects(db, events)
 

@@ -32,7 +32,7 @@ from .app.services.asr_service import resume_pending_asr_jobs
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    configure_logging()
+    configure_logging(data_dir=settings.data_dir)
 
     app = FastAPI(title="短视频智能素材自动植入系统 API", version="1.0.0")
 

@@ -1,4 +1,4 @@
-import { api } from "./index";
+import { api, withAuthToken } from "./index";
 
 export async function getStats() {
   const { data } = await api.get("/stats");
@@ -65,20 +65,21 @@ export async function deleteTask(id) {
 }
 
 export function downloadOutputUrl(id) {
-  return `/api/tasks/${id}/output`;
+  return withAuthToken(`/api/tasks/${id}/output`);
 }
 
 export function downloadReportUrl(id) {
-  return `/api/tasks/${id}/report`;
+  return withAuthToken(`/api/tasks/${id}/report`);
 }
 
 export function downloadLogUrl(id) {
-  return `/api/tasks/${id}/log`;
+  return withAuthToken(`/api/tasks/${id}/log`);
 }
 
 export async function getLogText(id, tail_kb = 256) {
+  const token = localStorage.getItem("vmis_token");
   const resp = await fetch(`/api/tasks/${id}/log/text?tail_kb=${tail_kb}`, {
-    headers: { Accept: "text/plain" },
+    headers: { Accept: "text/plain", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
   if (!resp.ok) throw new Error("获取日志失败");
   return await resp.text();
