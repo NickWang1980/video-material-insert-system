@@ -12,6 +12,7 @@ import Settings from "../views/Settings.vue";
 import RoughCutUnit from "../views/RoughCutUnit.vue";
 import AuditLog from "../views/AuditLog.vue";
 import UserManagement from "../views/UserManagement.vue";
+import LogsViewer from "../views/LogsViewer.vue";
 import Login from "../views/Login.vue";
 
 const routes = [
@@ -28,6 +29,7 @@ const routes = [
   { path: "/rough-cut/unit", name: "roughCutUnit", component: RoughCutUnit },
   { path: "/audit", name: "audit", component: AuditLog },
   { path: "/admin/users", name: "userManagement", component: UserManagement, meta: { adminOnly: true } },
+  { path: "/logs", name: "logs", component: LogsViewer },
   { path: "/settings", name: "settings", component: Settings },
 ];
 

@@ -17,6 +17,15 @@
     </div>
 
     <div class="p-6 rounded-xl border border-gray-200 shadow-card" v-if="task">
+      <div class="mb-4">
+        <div class="text-sm text-gray-500 mb-2">执行环境</div>
+        <ExecutionMetaTags
+          :model="task.asr_model_used || ''"
+          :compute="task.asr_compute_type_used || ''"
+          :encoder="task.video_encoder_used || ''"
+          :resolution="task.video_resolution_used || ''"
+        />
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div><div class="text-sm text-gray-500">任务名称</div><div class="font-bold mt-1">{{ task.task_name }}</div></div>
         <div><div class="text-sm text-gray-500">状态</div><div class="mt-1"><StatusTag :status="task.status" /></div></div>
@@ -112,6 +121,7 @@ import { ElMessage } from "element-plus";
 
 import StatusTag from "../components/common/StatusTag.vue";
 import ProgressBar from "../components/common/ProgressBar.vue";
+import ExecutionMetaTags from "../components/common/ExecutionMetaTags.vue";
 
 import { useTaskStore } from "../store/modules/task";
 import {

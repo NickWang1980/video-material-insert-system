@@ -198,18 +198,36 @@ get_hf_cache_dir() {
   echo "${cache_home}/huggingface/hub"
 }
 
+# 完整性校验：模型目录必须满足
+#   1) model.bin 存在且 ≥ 1 MB（过滤 0 字节占位 / 截断下载）
+#   2) config.json 存在且非空
+#   3) tokenizer.json / vocabulary.txt / vocab.json 三选一非空
+_verify_asr_model_dir() {
+  local d="$1"
+  [ -d "$d" ] || return 1
+  [ -f "${d}/model.bin" ] || return 1
+  local size
+  size=$(wc -c < "${d}/model.bin" 2>/dev/null || echo 0)
+  [ "$size" -ge 1048576 ] || return 1
+  [ -s "${d}/config.json" ] || return 1
+  if [ -s "${d}/tokenizer.json" ] || [ -s "${d}/vocabulary.txt" ] || [ -s "${d}/vocab.json" ]; then
+    return 0
+  fi
+  return 1
+}
+
 asr_model_cached() {
   local model_name="$1"
   # 优先检查项目本地路径（无需 symlink 权限）
   local local_dir="$PROJECT_ROOT/data/asr_models/faster-whisper-${model_name}"
-  [ -f "${local_dir}/model.bin" ] && return 0
+  _verify_asr_model_dir "$local_dir" && return 0
   # 兼容：也检查 HF 缓存（旧版已缓存的情况）
   local hf_cache snap_base snap
   hf_cache="$(get_hf_cache_dir)"
   snap_base="${hf_cache}/models--Systran--faster-whisper-${model_name}/snapshots"
   [ -d "$snap_base" ] || return 1
   for snap in "${snap_base}"/*/; do
-    [ -f "${snap}model.bin" ] && return 0
+    _verify_asr_model_dir "${snap%/}" && return 0
   done
   return 1
 }
@@ -283,18 +301,132 @@ else
 fi
 
 # ── 5. FFmpeg / FFprobe ───────────────────────────────────────────────────────
+# 缺失自动下载：固定使用 GyanD 的 ffmpeg-8.1-essentials_build（与 backend/.env 默认路径一致）
+ensure_ffmpeg() {
+  local target_dir="$PROJECT_ROOT/tools/ffmpeg/ffmpeg-8.1-essentials_build"
+  local target_exe="$target_dir/bin/ffmpeg.exe"
+
+  # 已就绪 → 不下
+  if [ -f "$target_exe" ]; then
+    return 0
+  fi
+  # 系统 PATH 上同时有 ffmpeg + ffprobe → 也不下（用户自备）
+  if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local url="https://github.com/GyanD/codexffmpeg/releases/download/8.1/ffmpeg-8.1-essentials_build.zip"
+  local zip_path="$PROJECT_ROOT/tools/ffmpeg/ffmpeg-8.1-essentials_build.zip"
+  mkdir -p "$PROJECT_ROOT/tools/ffmpeg"
+
+  log_dl "FFmpeg 未找到 — 从 ${url##*/} 下载（约 100 MB）..."
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -L --fail --progress-bar -o "$zip_path" "$url"; then
+      log_fail "FFmpeg — 下载失败（curl）"
+      rm -f "$zip_path"
+      return 1
+    fi
+  elif command -v powershell >/dev/null 2>&1; then
+    local zip_win
+    zip_win=$(cygpath -w "$zip_path" 2>/dev/null || echo "$zip_path")
+    if ! powershell -NonInteractive -Command "\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${url}' -OutFile '${zip_win}'"; then
+      log_fail "FFmpeg — 下载失败（powershell）"
+      rm -f "$zip_path"
+      return 1
+    fi
+  else
+    log_fail "FFmpeg — 缺少 curl / powershell，无法自动下载"
+    return 1
+  fi
+
+  log_dl "FFmpeg — 解压中..."
+  if command -v unzip >/dev/null 2>&1; then
+    if ! unzip -q -o "$zip_path" -d "$PROJECT_ROOT/tools/ffmpeg"; then
+      log_fail "FFmpeg — 解压失败（unzip）"
+      return 1
+    fi
+  elif command -v powershell >/dev/null 2>&1; then
+    local zip_win dest_win
+    zip_win=$(cygpath -w "$zip_path" 2>/dev/null || echo "$zip_path")
+    dest_win=$(cygpath -w "$PROJECT_ROOT/tools/ffmpeg" 2>/dev/null || echo "$PROJECT_ROOT/tools/ffmpeg")
+    if ! powershell -NonInteractive -Command "Expand-Archive -Path '${zip_win}' -DestinationPath '${dest_win}' -Force"; then
+      log_fail "FFmpeg — 解压失败（powershell）"
+      return 1
+    fi
+  else
+    log_fail "FFmpeg — 缺少 unzip / powershell，无法自动解压"
+    return 1
+  fi
+
+  rm -f "$zip_path"
+
+  if [ -f "$target_exe" ]; then
+    log_warn "FFmpeg — 已下载并解压到 tools/ffmpeg/ffmpeg-8.1-essentials_build/"
+  else
+    log_fail "FFmpeg — 解压后仍未找到 ${target_exe}"
+    return 1
+  fi
+}
+
+ensure_ffmpeg
 check_ffbin "FFmpeg " "$FFMPEG_BIN"
 check_ffbin "FFprobe" "$FFPROBE_BIN"
 
-# ── 6. ASR 模型（small + medium）─────────────────────────────────────────────
+# ── 6. ASR 模型（列出全部已知模型，必备模型自动下载）──────────────────────
+# 已知模型清单（与 backend/app/services/asr_service.py 的 ASR_MODEL_REPOS 对应）
+ALL_KNOWN_MODELS=(small medium large-v3 large-v3-turbo)
+# 必备模型：缺失时自动下载（其它模型仅展示状态，由用户在 UI 触发安装）
+# medium 是 UI 默认推荐模型；其它（small / large-v3 / large-v3-turbo）按需在系统设置里安装。
+ESSENTIAL_MODELS=(medium)
+
+# 计算 model.bin 体积（MB），用于状态展示
+_model_bin_size_mb() {
+  local d="$1"
+  local size_bytes
+  size_bytes=$(wc -c < "${d}/model.bin" 2>/dev/null || echo 0)
+  echo $((size_bytes / 1024 / 1024))
+}
+
+# 列出 data/asr_models/ 下所有目录（含未在 ALL_KNOWN_MODELS 里的）
+_list_extra_cached_models() {
+  local base="$PROJECT_ROOT/data/asr_models"
+  [ -d "$base" ] || return 0
+  for d in "$base"/faster-whisper-*/; do
+    [ -d "$d" ] || continue
+    local name="${d%/}"
+    name="${name##*/faster-whisper-}"
+    # 跳过已知模型（避免重复打印）
+    local known=0
+    for k in "${ALL_KNOWN_MODELS[@]}"; do
+      [ "$k" = "$name" ] && known=1 && break
+    done
+    [ "$known" -eq 0 ] && echo "$name"
+  done
+}
+
 if [ "$SKIP_ASR" -eq 1 ]; then
   log_info "ASR 模型检查已跳过（--skip-asr）"
 else
-  for model in small medium; do
+  for model in "${ALL_KNOWN_MODELS[@]}"; do
+    local_dir="$PROJECT_ROOT/data/asr_models/faster-whisper-${model}"
     if asr_model_cached "$model"; then
-      log_ok "ASR 模型 ${model} — 就绪（已缓存）"
-    else
-      log_dl "ASR 模型 ${model} — 未找到，开始下载（small≈500MB，medium≈1.5GB）..."
+      size_mb=$(_model_bin_size_mb "$local_dir")
+      log_ok "ASR 模型 ${model} — 就绪（${size_mb} MB）"
+      continue
+    fi
+
+    # 判断是否必备
+    is_essential=0
+    for em in "${ESSENTIAL_MODELS[@]}"; do
+      [ "$em" = "$model" ] && is_essential=1 && break
+    done
+    if [ "$is_essential" -eq 0 ]; then
+      log_info "ASR 模型 ${model} — 未安装（可在系统设置中按需下载）"
+      continue
+    fi
+
+    # 必备模型 → 自动下载
+    log_dl "ASR 模型 ${model} — 未找到，开始下载（small≈500MB，medium≈1.5GB）..."
       if activate_venv 2>/dev/null; then
         PYTHONUNBUFFERED=1 python - "$model" "$PROJECT_ROOT" <<'PYEOF'
 import sys, os, shutil
@@ -302,7 +434,13 @@ model = sys.argv[1]
 project_root = sys.argv[2]
 local_dir = os.path.join(project_root, 'data', 'asr_models', f'faster-whisper-{model}')
 os.makedirs(local_dir, exist_ok=True)
-repo_id = f'Systran/faster-whisper-{model}'
+ASR_MODEL_REPOS = {
+    'small':          'Systran/faster-whisper-small',
+    'medium':         'Systran/faster-whisper-medium',
+    'large-v3':       'Systran/faster-whisper-large-v3',
+    'large-v3-turbo': 'deepdml/faster-whisper-large-v3-turbo-ct2',
+}
+repo_id = ASR_MODEL_REPOS.get(model, f'Systran/faster-whisper-{model}')
 
 def _do_download(repo_id, local_dir):
     from huggingface_hub import snapshot_download
@@ -339,7 +477,15 @@ except Exception as e:
 print('[precheck]      验证模型完整性...', flush=True)
 try:
     from faster_whisper import WhisperModel
-    WhisperModel(local_dir, device='cpu', compute_type='int8')
+    # 优先尝试 CUDA；不可用则退回 CPU（仅用于校验模型完整性，不缓存模型实例）
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            WhisperModel(local_dir, device='cuda', compute_type='float16')
+        else:
+            WhisperModel(local_dir, device='cpu', compute_type='int8')
+    except Exception:
+        WhisperModel(local_dir, device='cpu', compute_type='int8')
 except Exception as e:
     print(f'[precheck]      验证失败: {e}', file=sys.stderr, flush=True)
     sys.exit(1)
@@ -355,16 +501,69 @@ PYEOF
       else
         log_fail "ASR 模型 ${model} — 无法下载（.venv 未就绪）"
       fi
-    fi
   done
+
+  # 列出额外（已知清单之外）的缓存模型，方便发现"非标准目录名"的旧下载
+  while IFS= read -r extra; do
+    [ -z "$extra" ] && continue
+    extra_dir="$PROJECT_ROOT/data/asr_models/faster-whisper-${extra}"
+    if _verify_asr_model_dir "$extra_dir"; then
+      size_mb=$(_model_bin_size_mb "$extra_dir")
+      log_info "ASR 模型 ${extra} — 已缓存但不在已知清单中（${size_mb} MB）"
+    fi
+  done < <(_list_extra_cached_models)
 fi
 
 # ── 7. 数据库锁 ───────────────────────────────────────────────────────────────
 check_db_lock
 
 # ── 8. 端口 8000 + 5173 ───────────────────────────────────────────────────────
+# 先尝试常规释放
 free_port 8000
 free_port 5173
+
+# 二次验证：如果还有真活进程占用，调用 stop_all.sh 做更彻底的清理
+_port_active_pids() {
+  local port="$1"
+  local pids alive=""
+  pids=$(netstat -ano 2>/dev/null \
+    | awk -v p=":${port}" '$1~/TCP|UDP/ && ($2~p" " || $2~p"$") {print $NF}' \
+    | sort -u | grep -E '^[0-9]+$' || true)
+  for pid in $pids; do
+    # PID 0 = System Idle Process（内核占位），不是真活进程
+    [ "$pid" = "0" ] && continue
+    if tasklist //FI "PID eq ${pid}" 2>/dev/null | grep -q "[[:space:]]${pid}[[:space:]]"; then
+      # 还要排除 tasklist 把 PID 0 渲染为 "System Idle Process" 的情形（防御性）
+      local proc_name
+      proc_name=$(tasklist //FI "PID eq ${pid}" //FO CSV //NH 2>/dev/null | head -1 | awk -F'","' '{print $1}' | tr -d '"' || true)
+      if [ "$proc_name" = "System Idle Process" ] || [ "$proc_name" = "System" ]; then
+        continue
+      fi
+      alive="${alive} ${pid}"
+    fi
+  done
+  echo "${alive# }"
+}
+
+still_8000="$(_port_active_pids 8000)"
+still_5173="$(_port_active_pids 5173)"
+if [ -n "$still_8000" ] || [ -n "$still_5173" ]; then
+  log_warn "端口仍被活进程占用（8000=${still_8000:-空} / 5173=${still_5173:-空}），调用 stop_all.sh 彻底清理..."
+  if [ -x "$PROJECT_ROOT/scripts/stop_all.sh" ]; then
+    bash "$PROJECT_ROOT/scripts/stop_all.sh" || true
+  else
+    bash "$PROJECT_ROOT/scripts/stop_all.sh" || true
+  fi
+  sleep 1
+  # 复检
+  still_8000="$(_port_active_pids 8000)"
+  still_5173="$(_port_active_pids 5173)"
+  if [ -z "$still_8000" ] && [ -z "$still_5173" ]; then
+    log_ok "stop_all.sh 已彻底释放端口"
+  else
+    log_fail "stop_all.sh 后仍残留：8000=${still_8000:-空} / 5173=${still_5173:-空}"
+  fi
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 echo -e "${C_BOLD}${PREFIX} ============================================${C_RESET}"

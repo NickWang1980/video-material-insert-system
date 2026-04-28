@@ -30,6 +30,7 @@ class SourceVideoEntry(Base):
     subtitle_line_count_user: Mapped[int | None] = mapped_column(Integer, nullable=True)
     subtitle_line_count_asr: Mapped[int | None] = mapped_column(Integer, nullable=True)
     asr_model_used: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    asr_compute_type_used: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

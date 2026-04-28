@@ -747,6 +747,17 @@ def process_task(settings: Settings, task_id: int) -> None:
                 / f"output_{task_id}_{_timestamp()}.{output_ext}"
             )
 
+            encoder_mode = getattr(settings_row, "video_encoder_mode", "auto") or "auto"
+            from ..utils.encoder_utils import get_active_codec
+            from .asr_service import resolved_compute_label
+            task.asr_model_used = settings_row.asr_model
+            task.asr_compute_type_used = resolved_compute_label(
+                getattr(settings_row, "asr_compute_type", "auto") or "auto"
+            )
+            task.video_encoder_used = get_active_codec(encoder_mode, settings.ffmpeg_bin)
+            task.video_resolution_used = settings_row.resolution
+            db.commit()
+
             ffmpeg_cmd = build_ffmpeg_command(
                 settings,
                 video_path=task.video_path,
@@ -758,6 +769,7 @@ def process_task(settings: Settings, task_id: int) -> None:
                 resolution=settings_row.resolution,
                 video_bitrate_kbps=int(settings_row.video_bitrate_kbps),
                 add_subtitle_to_video=bool(task.add_subtitle_to_video),
+                video_encoder_mode=encoder_mode,
             )
 
             task.progress = 75

@@ -20,70 +20,193 @@ _asr_lock = threading.Lock()
 DEFAULT_ASR_RETRY_MAX = 3
 _opencc_converter = None
 
-# Shared WhisperModel cache — one instance per model name, reused across all callers.
-# Uses a loading-event dict so the main lock is never held during the slow WhisperModel()
-# constructor, which could block API status queries for minutes.
-_whisper_model_cache: dict[str, object] = {}
-_whisper_loading_events: dict[str, threading.Event] = {}
+# HuggingFace repo IDs per model size used by faster-whisper / CTranslate2.
+ASR_MODEL_REPOS: dict[str, str] = {
+    "small":          "Systran/faster-whisper-small",
+    "medium":         "Systran/faster-whisper-medium",
+    "large-v3":       "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+}
+
+# Approximate download size (MB) — used for the install confirmation dialog.
+ASR_MODEL_SIZES_MB: dict[str, int] = {
+    "small": 480,
+    "medium": 1500,
+    "large-v3": 3100,
+    "large-v3-turbo": 1620,
+}
+
+# Shared WhisperModel cache — keyed by (resolved_path_or_name, device, compute_type).
+_whisper_model_cache: dict[tuple, object] = {}
+_whisper_loading_events: dict[tuple, threading.Event] = {}
 _whisper_model_cache_lock = threading.Lock()
 
+# CUDA availability is probed once per process.
+_cuda_available_cache: bool | None = None
 
-def _get_or_load_whisper_model(model_name: str):
+
+def _detect_cuda_available() -> bool:
+    global _cuda_available_cache
+    if _cuda_available_cache is not None:
+        return _cuda_available_cache
+    try:
+        import ctranslate2  # type: ignore
+        _cuda_available_cache = ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        _cuda_available_cache = False
+    logger.info(f"ASR CUDA available: {_cuda_available_cache}")
+    return _cuda_available_cache
+
+
+def _resolve_device_compute(compute_pref: str | None) -> tuple[str, str]:
+    """Resolve user's compute preference to (device, compute_type) for WhisperModel.
+
+    compute_pref: "auto" | "int8" | "float16" | "float32"
+    规则：
+      - int8 始终走 CPU，绝不与 CUDA 混用（int8_float16 在 CUDA 上质量与速度
+        都不如纯 float16，反而失去 int8 的内存优势——属于劣解）。
+      - float16 / float32 优先走 CUDA，CUDA 不可用时回退 CPU。
+      - auto：有 CUDA 用 float16，无 CUDA 用 int8（CPU 上最快）。
+    """
+    has_cuda = _detect_cuda_available()
+    pref = (compute_pref or "auto").strip().lower()
+
+    # int8 显式选择 → 强制 CPU（不与 CUDA 混用）
+    if pref == "int8":
+        return "cpu", "int8"
+
+    if has_cuda:
+        if pref == "float32":
+            return "cuda", "float32"
+        # auto / float16 → float16 on GPU is the sweet spot
+        return "cuda", "float16"
+
+    # CPU 回退
+    if pref == "float32":
+        return "cpu", "float32"
+    return "cpu", "int8"
+
+
+def resolved_compute_label(compute_pref: str | None) -> str:
+    """Human-readable string of the actually used compute_type + device.
+
+    Example outputs:
+        "int8 (CPU)"      — int8 selected (always CPU), or auto/float16 with no CUDA
+        "float16 (CUDA)"  — auto/float16 selected with NVIDIA
+        "float32 (CUDA)"  — float32 selected with NVIDIA
+        "float32 (CPU)"   — float32 selected, no CUDA
+    """
+    device, compute_type = _resolve_device_compute(compute_pref)
+    return f"{compute_type} ({device.upper()})"
+
+
+def _get_or_load_whisper_model(model_name_or_path: str, compute_pref: str | None = None):
+    device, compute_type = _resolve_device_compute(compute_pref)
+    cache_key = (model_name_or_path, device, compute_type)
+
     with _whisper_model_cache_lock:
-        if model_name in _whisper_model_cache:
-            return _whisper_model_cache[model_name]
-        if model_name in _whisper_loading_events:
-            event = _whisper_loading_events[model_name]
+        if cache_key in _whisper_model_cache:
+            return _whisper_model_cache[cache_key]
+        if cache_key in _whisper_loading_events:
+            event = _whisper_loading_events[cache_key]
             should_load = False
         else:
             event = threading.Event()
-            _whisper_loading_events[model_name] = event
+            _whisper_loading_events[cache_key] = event
             should_load = True
 
     if not should_load:
         event.wait()
         with _whisper_model_cache_lock:
-            if model_name in _whisper_model_cache:
-                return _whisper_model_cache[model_name]
-        raise RuntimeError(f"ASR 模型 {model_name!r} 加载失败，请重试")
+            if cache_key in _whisper_model_cache:
+                return _whisper_model_cache[cache_key]
+        raise RuntimeError(f"ASR 模型 {model_name_or_path!r} 加载失败，请重试")
 
     try:
         from faster_whisper import WhisperModel
     except Exception as exc:
         with _whisper_model_cache_lock:
-            _whisper_loading_events.pop(model_name, None)
+            _whisper_loading_events.pop(cache_key, None)
         event.set()
         raise RuntimeError("faster-whisper 未安装或加载失败") from exc
 
     try:
-        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        logger.info(
+            f"Loading WhisperModel: model={model_name_or_path} device={device} compute_type={compute_type}"
+        )
+        model = WhisperModel(model_name_or_path, device=device, compute_type=compute_type)
     except Exception:
         with _whisper_model_cache_lock:
-            _whisper_loading_events.pop(model_name, None)
+            _whisper_loading_events.pop(cache_key, None)
         event.set()
         raise
 
     with _whisper_model_cache_lock:
-        _whisper_model_cache[model_name] = model
-        _whisper_loading_events.pop(model_name, None)
+        _whisper_model_cache[cache_key] = model
+        _whisper_loading_events.pop(cache_key, None)
     event.set()
     return model
 
 
 def get_loaded_asr_models() -> list[str]:
     with _whisper_model_cache_lock:
-        return list(_whisper_model_cache.keys())
+        return [str(k[0]) for k in _whisper_model_cache.keys()]
 
 
 def _normalize_asr_model(asr_model: str | None) -> str:
     value = (asr_model or "small").strip().lower()
-    return value if value in {"small", "medium"} else "small"
+    return value if value in ASR_MODEL_REPOS else "small"
+
+
+# ── ASR 模型完整性校验 ──────────────────────────────────────────────────────
+# faster-whisper / CTranslate2 模型必备文件清单。`model.bin` 体积下限设 1 MB，
+# 用于过滤 0 字节占位 / 截断下载这类常见失败。
+ASR_MODEL_BIN_MIN_BYTES = 1 * 1024 * 1024
+_ASR_TOKENIZER_CANDIDATES = ("tokenizer.json", "vocabulary.txt", "vocab.json")
+
+
+def model_dir_for(model_name: str, data_dir: Path) -> Path:
+    return data_dir / "asr_models" / f"faster-whisper-{_normalize_asr_model(model_name)}"
+
+
+def check_model_integrity(model_name: str, data_dir: Path) -> tuple[bool, str | None]:
+    """完整性检查：返回 (ok, reason)。reason 在 ok=False 时给出原因，便于诊断。"""
+    local_dir = model_dir_for(model_name, data_dir)
+    if not local_dir.is_dir():
+        return False, "模型目录不存在"
+
+    bin_file = local_dir / "model.bin"
+    if not bin_file.exists():
+        return False, "缺少 model.bin"
+    try:
+        bin_size = bin_file.stat().st_size
+    except OSError as e:
+        return False, f"无法读取 model.bin: {e}"
+    if bin_size < ASR_MODEL_BIN_MIN_BYTES:
+        return False, f"model.bin 体积异常（{bin_size} 字节，疑似下载中断）"
+
+    cfg_file = local_dir / "config.json"
+    if not cfg_file.exists() or cfg_file.stat().st_size == 0:
+        return False, "缺少或损坏的 config.json"
+
+    has_tokenizer = any(
+        (local_dir / f).exists() and (local_dir / f).stat().st_size > 0
+        for f in _ASR_TOKENIZER_CANDIDATES
+    )
+    if not has_tokenizer:
+        return False, f"缺少分词器文件（{' / '.join(_ASR_TOKENIZER_CANDIDATES)} 任一）"
+
+    return True, None
+
+
+def is_model_complete(model_name: str, data_dir: Path) -> bool:
+    ok, _ = check_model_integrity(model_name, data_dir)
+    return ok
 
 
 def _resolve_model_path(model_name: str, data_dir: Path) -> str:
-    local_dir = data_dir / "asr_models" / f"faster-whisper-{model_name}"
-    if (local_dir / "model.bin").exists():
-        return str(local_dir)
+    if is_model_complete(model_name, data_dir):
+        return str(model_dir_for(model_name, data_dir))
     return model_name
 
 
@@ -182,7 +305,14 @@ def _run_asr_job(settings: Settings, source_entry_id: int, asr_model: str) -> No
                 entry.asr_progress = 45
                 db.commit()
                 model_path = _resolve_model_path(asr_model, settings.data_dir)
-                segments = transcribe_audio_segments(audio_path=audio_path, model_name=model_path)
+                from ..models.settings import SettingsRow as _SettingsRow
+                _row = db.query(_SettingsRow).filter(_SettingsRow.id == 1).first()
+                compute_pref = getattr(_row, "asr_compute_type", "auto") if _row else "auto"
+                entry.asr_compute_type_used = resolved_compute_label(compute_pref)
+                db.commit()
+                segments = transcribe_audio_segments(
+                    audio_path=audio_path, model_name=model_path, compute_pref=compute_pref
+                )
                 entry.asr_progress = 75
                 db.commit()
 
@@ -284,8 +414,10 @@ def _to_simplified_chinese(text: str) -> str:
     return converter.convert(text)
 
 
-def transcribe_audio_segments(*, audio_path: str, model_name: str) -> list[dict]:
-    model = _get_or_load_whisper_model(model_name)
+def transcribe_audio_segments(
+    *, audio_path: str, model_name: str, compute_pref: str | None = None
+) -> list[dict]:
+    model = _get_or_load_whisper_model(model_name, compute_pref=compute_pref)
     segments, _ = model.transcribe(
         audio_path,
         vad_filter=True,

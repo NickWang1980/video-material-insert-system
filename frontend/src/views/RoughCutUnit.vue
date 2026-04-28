@@ -277,6 +277,11 @@
                 :stroke-width="8"
                 :class="['pending', 'running'].includes(String(asset.asrStatus || '').toLowerCase()) ? 'progress-breathing' : ''"
               />
+              <ExecutionMetaTags
+                class="mt-2"
+                :model="asset.asrModelUsed || ''"
+                :compute="asset.asrComputeTypeUsed || ''"
+              />
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <el-button size="small" text @click="previewAsset(asset)">预览</el-button>
                 <el-button size="small" text @click="openCompareDialog(role.id, asset.id)">匹配对比</el-button>
@@ -516,10 +521,21 @@
         <div class="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.95fr)]">
           <div class="rcu-player-shell rounded-2xl border border-gray-200 bg-black p-3 text-white">
             <div class="mb-3 flex items-center justify-between text-sm">
-              <span>预览播放器</span>
+              <div class="flex items-center gap-3">
+                <span>预览播放器</span>
+                <ExecutionMetaTags
+                  :model="project?.asrModelUsed || ''"
+                  :compute="project?.asrComputeTypeUsed || ''"
+                  :encoder="project?.videoEncoderUsed || ''"
+                  :resolution="project?.videoResolutionUsed || ''"
+                />
+              </div>
               <span>{{ previewStatusText }}</span>
             </div>
-            <div class="rcu-player-inner relative overflow-hidden rounded-2xl border border-white/10 bg-black">
+            <div
+              class="rcu-player-inner relative overflow-hidden rounded-2xl border border-white/10 bg-black"
+              :class="allAsrCompleted ? 'h-[36vh]' : 'h-[72vh]'"
+            >
               <video
                 v-if="currentMediaUrl"
                 :key="currentMediaUrl"
@@ -527,11 +543,11 @@
                 :src="currentMediaUrl"
                 controls
                 preload="metadata"
-                :class="['mx-auto aspect-[9/16] w-full bg-black object-contain', allAsrCompleted ? 'max-h-[36vh]' : 'max-h-[72vh]']"
+                class="h-full w-full bg-black object-contain"
                 @timeupdate="onVideoTimeUpdate"
                 @loadedmetadata="onVideoLoadedMetadata"
               />
-              <div v-else class="aspect-[9/16] min-h-[420px] w-full bg-black" />
+              <div v-else class="h-full w-full bg-black" />
 
               <div
                 v-if="previewBusy"
@@ -734,6 +750,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import ExecutionMetaTags from "../components/common/ExecutionMetaTags.vue";
 
 import {
   buildRoughCutTimeline,

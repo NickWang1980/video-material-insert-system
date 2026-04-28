@@ -25,6 +25,7 @@ class SourceVideoEntryResponse(BaseModel):
     subtitle_line_count_user: int | None = None
     subtitle_line_count_asr: int | None = None
     asr_model_used: str | None = None
+    asr_compute_type_used: str | None = None
     has_wav: bool = False
     has_flac: bool = False
     has_uploaded_srt: bool = False

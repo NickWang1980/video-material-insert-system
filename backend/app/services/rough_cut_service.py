@@ -19,6 +19,7 @@ from ..models.rough_cut_project import RoughCutProject
 from ..models.settings import SettingsRow
 from ..models.database import SessionLocal
 from ..schemas.rough_cut import RenderSettings
+from ..utils.encoder_utils import build_video_encode_args
 from .asr_service import transcribe_audio_segments, write_segments_to_srt, _resolve_model_path
 from .subtitle_service import parse_srt
 from .video_service import probe_video
@@ -432,6 +433,8 @@ def _ensure_asset_defaults(asset: dict) -> dict:
     normalized.setdefault("errorPercent", 100.0)
     normalized.setdefault("manualGatePassed", False)
     normalized.setdefault("gatePassed", False)
+    normalized.setdefault("asrModelUsed", None)
+    normalized.setdefault("asrComputeTypeUsed", None)
     if normalized["asrSrtPath"] and (
         normalized["asrDuration"] <= 0.0
         or normalized["asrEndSeconds"] <= 0.0
@@ -1219,6 +1222,17 @@ def _probe_has_audio(settings: Settings, file_path: str) -> bool:
         return False
 
 
+def _read_video_encoder_mode() -> str:
+    db = SessionLocal()
+    try:
+        row = db.query(SettingsRow).filter(SettingsRow.id == 1).first()
+        if not row:
+            return "auto"
+        return getattr(row, "video_encoder_mode", "auto") or "auto"
+    finally:
+        db.close()
+
+
 def _render_timeline(
     settings: Settings,
     project: RoughCutProject,
@@ -1229,6 +1243,27 @@ def _render_timeline(
     _raise_if_rough_cut_stop_requested(project.id)
     if not timeline:
         raise ValueError("当前时间线为空，无法导出。")
+
+    encoder_mode = _read_video_encoder_mode()
+
+    # 捕获本次导出使用的执行参数，写入 project 供 UI 展示
+    db = SessionLocal()
+    try:
+        row = db.query(SettingsRow).filter(SettingsRow.id == 1).first()
+        if row:
+            from ..utils.encoder_utils import get_active_codec
+            from .asr_service import resolved_compute_label
+            project_db = db.query(RoughCutProject).filter(RoughCutProject.id == project.id).first()
+            if project_db:
+                project_db.asr_model_used = row.asr_model
+                project_db.asr_compute_type_used = resolved_compute_label(
+                    getattr(row, "asr_compute_type", "auto") or "auto"
+                )
+                project_db.video_encoder_used = get_active_codec(encoder_mode, settings.ffmpeg_bin)
+                project_db.video_resolution_used = str(render_settings.get("resolution", "1080p"))
+                db.commit()
+    finally:
+        db.close()
 
     aspect_ratio = str(render_settings.get("aspectRatio", "9:16"))
     resolution = str(render_settings.get("resolution", "1080p"))
@@ -1272,12 +1307,9 @@ def _render_timeline(
                 source_path.as_posix(),
                 "-vf",
                 vf,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
+                *build_video_encode_args(
+                    encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+                ),
                 "-pix_fmt",
                 "yuv420p",
                 "-an",
@@ -1296,12 +1328,9 @@ def _render_timeline(
                     source_path.as_posix(),
                     "-vf",
                     vf,
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "23",
+                    *build_video_encode_args(
+                        encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+                    ),
                     "-pix_fmt",
                     "yuv420p",
                     "-c:a",
@@ -1337,12 +1366,9 @@ def _render_timeline(
                     "-map",
                     "1:a:0",
                     "-shortest",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "23",
+                    *build_video_encode_args(
+                        encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+                    ),
                     "-pix_fmt",
                     "yuv420p",
                     "-c:a",
@@ -1374,12 +1400,9 @@ def _render_timeline(
         "0",
         "-i",
         concat_file.as_posix(),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
+        *build_video_encode_args(
+            encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+        ),
         "-pix_fmt",
         "yuv420p",
     ]
@@ -1404,12 +1427,9 @@ def _render_timeline(
                 output_path.as_posix(),
                 "-vf",
                 f"subtitles='{srt_path.as_posix()}'",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
+                *build_video_encode_args(
+                    encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+                ),
                 "-c:a",
                 "copy",
                 burned_path.as_posix(),
@@ -1588,6 +1608,10 @@ def project_to_payload(project: RoughCutProject) -> dict:
         "previewUrl": f"/api/rough-cut/projects/{project.id}/media?type=preview" if project.preview_path else None,
         "outputUrl": f"/api/rough-cut/projects/{project.id}/media?type=output" if project.output_path else None,
         "stageSummary": stage_summary,
+        "asrModelUsed": getattr(project, "asr_model_used", None),
+        "asrComputeTypeUsed": getattr(project, "asr_compute_type_used", None),
+        "videoEncoderUsed": getattr(project, "video_encoder_used", None),
+        "videoResolutionUsed": getattr(project, "video_resolution_used", None),
         "createdAt": project.created_at,
         "updatedAt": project.updated_at,
     }
@@ -2224,7 +2248,19 @@ def _run_rough_cut_asset_asr_job(settings: Settings, project_id: int, asset_id: 
                                patch={"asrStatus": "running", "asrProgress": 35, "asrError": None})
 
         model_path = _resolve_model_path(asr_model, settings.data_dir)
-        segments = transcribe_audio_segments(audio_path=source_path, model_name=model_path)
+        _row = db.query(SettingsRow).filter(SettingsRow.id == 1).first()
+        compute_pref = getattr(_row, "asr_compute_type", "auto") if _row else "auto"
+        from .asr_service import resolved_compute_label
+        _update_project_asset(
+            db, project, asset_id=asset_id,
+            patch={
+                "asrModelUsed": asr_model,
+                "asrComputeTypeUsed": resolved_compute_label(compute_pref),
+            },
+        )
+        segments = transcribe_audio_segments(
+            audio_path=source_path, model_name=model_path, compute_pref=compute_pref
+        )
         _update_project_asset(db, project, asset_id=asset_id,
                                patch={"asrStatus": "running", "asrProgress": 75})
 
@@ -2461,6 +2497,7 @@ def render_sentence_preview(settings: Settings, project: RoughCutProject, senten
     )
 
     has_audio = _probe_has_audio(settings, source_path.as_posix())
+    encoder_mode = _read_video_encoder_mode()
 
     if audio_mode in ("mute", "tts") or not has_audio:
         cmd = [
@@ -2469,7 +2506,9 @@ def render_sentence_preview(settings: Settings, project: RoughCutProject, senten
             "-to", f"{source_end:.3f}",
             "-i", source_path.as_posix(),
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            *build_video_encode_args(
+                encoder_mode, settings.ffmpeg_bin, preset="ultrafast", crf=28
+            ),
             "-pix_fmt", "yuv420p", "-an",
             out_file.as_posix(),
         ]
@@ -2480,7 +2519,9 @@ def render_sentence_preview(settings: Settings, project: RoughCutProject, senten
             "-to", f"{source_end:.3f}",
             "-i", source_path.as_posix(),
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            *build_video_encode_args(
+                encoder_mode, settings.ffmpeg_bin, preset="ultrafast", crf=28
+            ),
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             out_file.as_posix(),

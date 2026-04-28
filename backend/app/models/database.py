@@ -350,6 +350,44 @@ def _ensure_schema_compatibility() -> None:
             conn.execute(
                 text("ALTER TABLE settings ADD COLUMN asr_model TEXT DEFAULT 'small'")
             )
+        if "asr_compute_type" not in settings_column_names:
+            conn.execute(
+                text("ALTER TABLE settings ADD COLUMN asr_compute_type TEXT DEFAULT 'auto'")
+            )
+        if "video_encoder_mode" not in settings_column_names:
+            conn.execute(
+                text("ALTER TABLE settings ADD COLUMN video_encoder_mode TEXT DEFAULT 'auto'")
+            )
+
+        # ── source_video_entries: asr_compute_type_used ───────────────
+        if "asr_compute_type_used" not in source_column_names:
+            conn.execute(
+                text("ALTER TABLE source_video_entries ADD COLUMN asr_compute_type_used TEXT")
+            )
+
+        # ── tasks: 4 个执行环境字段 ──────────────────────────────────
+        task_columns = conn.execute(text("PRAGMA table_info(tasks)")).fetchall()
+        task_column_names = {row[1] for row in task_columns}
+        for col, ddl in [
+            ("asr_model_used", "TEXT"),
+            ("asr_compute_type_used", "TEXT"),
+            ("video_encoder_used", "TEXT"),
+            ("video_resolution_used", "TEXT"),
+        ]:
+            if col not in task_column_names:
+                conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}"))
+
+        # ── rough_cut_projects: 4 个执行环境字段 ─────────────────────
+        rcp_columns = conn.execute(text("PRAGMA table_info(rough_cut_projects)")).fetchall()
+        rcp_column_names = {row[1] for row in rcp_columns}
+        for col, ddl in [
+            ("asr_model_used", "TEXT"),
+            ("asr_compute_type_used", "TEXT"),
+            ("video_encoder_used", "TEXT"),
+            ("video_resolution_used", "TEXT"),
+        ]:
+            if col not in rcp_column_names:
+                conn.execute(text(f"ALTER TABLE rough_cut_projects ADD COLUMN {col} {ddl}"))
 
         material_columns = conn.execute(text("PRAGMA table_info(materials)")).fetchall()
         material_column_names = {row[1] for row in material_columns}

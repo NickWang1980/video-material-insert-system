@@ -38,6 +38,8 @@ class RoleAsset(BaseModel):
     errorPercent: float = 100.0
     manualGatePassed: bool = False
     gatePassed: bool = False
+    asrModelUsed: str | None = None
+    asrComputeTypeUsed: str | None = None
 
 
 class CompareAssetItem(BaseModel):
@@ -158,6 +160,10 @@ class RoughCutProjectResponse(BaseModel):
     previewUrl: str | None = None
     outputUrl: str | None = None
     stageSummary: str | None = None
+    asrModelUsed: str | None = None
+    asrComputeTypeUsed: str | None = None
+    videoEncoderUsed: str | None = None
+    videoResolutionUsed: str | None = None
     createdAt: datetime
     updatedAt: datetime
 

@@ -33,5 +33,8 @@ python -m pip install -r backend/requirements.txt
 if [ "$MODE" = "prod" ]; then
   python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 else
-  python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+  # --reload-dir backend：仅监听 backend/ 源码变化
+  # 避免 uvicorn 把整个项目（含 dist/ 编译产物、data/ 大文件）当成 watch target
+  python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 \
+    --reload --reload-dir backend
 fi

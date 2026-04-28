@@ -10,6 +10,7 @@ from .app.api.audit import router as audit_router
 from .app.api.roles import router as roles_router
 from .app.api.users import router as users_router
 from .app.api.configs import router as configs_router
+from .app.api.logs import router as logs_router
 from .app.api.materials import router as materials_router
 from .app.api.rough_cut import router as rough_cut_router
 from .app.api.settings import router as settings_router
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(source_videos_router)
     app.include_router(settings_router)
     app.include_router(stats_router)
+    app.include_router(logs_router)
 
     # Production static hosting: mount frontend/dist if present
     repo_root = Path(__file__).resolve().parents[1]

@@ -13,7 +13,7 @@
           {{ collapsed ? "»" : "«" }}
         </el-button>
       </div>
-      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">V2.0</div>
+      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">V2.3</div>
     </div>
 
     <nav class="p-3 space-y-1">
@@ -114,6 +114,7 @@ const allItems = [
     key: "settings_group", label: "设置",
     children: [
       { to: "/audit",       label: "操作历史", short: "历", moduleKey: "audit" },
+      { to: "/logs",        label: "日志查看", short: "志", moduleKey: "settings" },
       { to: "/admin/users", label: "权限控制", short: "权", moduleKey: "user_management", adminOnly: true },
       { to: "/settings",    label: "系统设置", short: "设", moduleKey: "settings" },
     ],
