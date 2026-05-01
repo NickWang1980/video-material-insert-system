@@ -18,5 +18,6 @@ echo Starting backend on http://localhost:8000 ...
 if "%MODE%"=="prod" (
   .venv\Scripts\python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ) else (
-  .venv\Scripts\python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+  rem --reload-dir backend：仅监听 backend/ 源码变化，避免 dist/ 与 data/ 触发热重载
+  .venv\Scripts\python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
 )

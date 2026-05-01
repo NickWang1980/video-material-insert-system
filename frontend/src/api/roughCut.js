@@ -1,8 +1,8 @@
-import { api } from "./index";
+import { api, withAuthToken } from "./index";
 
-export async function listRoughCutProjects() {
-  const { data } = await api.get("/rough-cut/projects");
-  return data?.items || [];
+export async function listRoughCutProjects(page = 1, pageSize = 9) {
+  const { data } = await api.get("/rough-cut/projects", { params: { page, page_size: pageSize } });
+  return { items: data?.items || [], total: data?.total || 0 };
 }
 
 export async function createRoughCutProject(payload) {
@@ -115,6 +115,11 @@ export async function getRoughCutFfmpegStatus() {
   return data;
 }
 
+export async function getRoughCutAsrStatus() {
+  const { data } = await api.get(`/rough-cut/asr/status`);
+  return data;
+}
+
 export async function clearRoughCutFfmpegBlocked() {
   const { data } = await api.post(`/rough-cut/ffmpeg/clear`);
   return data;
@@ -122,11 +127,11 @@ export async function clearRoughCutFfmpegBlocked() {
 
 export function getRoughCutMediaUrl(projectId, type = "preview") {
   const mediaType = type === "output" ? "output" : "preview";
-  return `/api/rough-cut/projects/${projectId}/media?type=${mediaType}`;
+  return withAuthToken(`/api/rough-cut/projects/${projectId}/media?type=${mediaType}`);
 }
 
 export function getRoughCutAssetMediaUrl(projectId, assetId) {
-  return `/api/rough-cut/projects/${projectId}/assets/${assetId}/media`;
+  return withAuthToken(`/api/rough-cut/projects/${projectId}/assets/${assetId}/media`);
 }
 
 export async function previewRoughCutSentence(projectId, sentenceId) {
@@ -134,5 +139,32 @@ export async function previewRoughCutSentence(projectId, sentenceId) {
 }
 
 export function getSentencePreviewUrl(projectId, sentenceId) {
-  return `/api/rough-cut/projects/${projectId}/sentence-preview/${sentenceId}/media`;
+  return withAuthToken(`/api/rough-cut/projects/${projectId}/sentence-preview/${sentenceId}/media`);
+}
+
+export async function exportRoughCutStoryboard(projectId) {
+  const token = _mediaToken();
+  const url = `/api/rough-cut/projects/${projectId}/storyboard-export${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const resp = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!resp.ok) throw new Error((await resp.text()) || "导出失败");
+  const disposition = resp.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;]+)/i);
+  const filename = match
+    ? decodeURIComponent(match[1].replace(/"/g, ""))
+    : `分镜头时序导出文件_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.json`;
+  const blob = await resp.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+export async function importRoughCutStoryboard(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post(`/rough-cut/projects/${projectId}/storyboard-import`, form);
+  return data;
 }

@@ -18,6 +18,8 @@ class SettingsRow(Base):
     subtitle_encoding: Mapped[str] = mapped_column(String(30), default="utf-8")
     subtitle_time_offset_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     asr_model: Mapped[str] = mapped_column(String(20), default="small")
+    asr_compute_type: Mapped[str] = mapped_column(String(20), default="auto")
+    video_encoder_mode: Mapped[str] = mapped_column(String(20), default="auto")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

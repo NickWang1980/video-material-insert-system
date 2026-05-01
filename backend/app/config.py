@@ -15,6 +15,8 @@ class Settings:
     data_dir: Path
     ffmpeg_bin: str
     ffprobe_bin: str
+    db_encryption_key: str
+    jwt_secret: str
 
 
 _settings: Settings | None = None
@@ -38,6 +40,8 @@ def get_settings() -> Settings:
     data_dir = Path(data_dir_env).resolve()
     ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
     ffprobe_bin = os.getenv("FFPROBE_BIN", "ffprobe")
+    db_encryption_key = os.getenv("DB_ENCRYPTION_KEY", "")
+    jwt_secret = os.getenv("JWT_SECRET", "vmis-default-secret-change-in-prod")
 
     # Normalize sqlite path to be repo-root-relative when using the default ./data path.
     if database_url.startswith("sqlite:///./"):
@@ -51,5 +55,7 @@ def get_settings() -> Settings:
         data_dir=data_dir,
         ffmpeg_bin=ffmpeg_bin,
         ffprobe_bin=ffprobe_bin,
+        db_encryption_key=db_encryption_key,
+        jwt_secret=jwt_secret,
     )
     return _settings

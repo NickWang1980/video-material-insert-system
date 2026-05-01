@@ -18,6 +18,60 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False)
 DEFAULT_PRODUCT_CATALOGS = ["豆包", "抖音精选", "红果app"]
 
 
+def _ensure_default_roles(conn) -> None:
+    import json as _json
+    from ..schemas.role import ADMIN_MODULE_KEYS, DEFAULT_USER_MODULE_KEYS  # noqa: PLC0415
+    defaults = [
+        ("admin", "管理员", 1, ADMIN_MODULE_KEYS),
+        ("user", "普通用户", 1, DEFAULT_USER_MODULE_KEYS),
+    ]
+    for name, display_name, is_system, expected_keys in defaults:
+        row = conn.execute(
+            text("SELECT id, module_keys FROM role_definitions WHERE name=:n"), {"n": name}
+        ).fetchone()
+        if not row:
+            conn.execute(
+                text(
+                    "INSERT INTO role_definitions(name, display_name, is_system, module_keys, created_at) "
+                    "VALUES(:n, :d, :s, :m, datetime('now'))"
+                ),
+                {"n": name, "d": display_name, "s": is_system, "m": _json.dumps(expected_keys)},
+            )
+        else:
+            # Merge in any newly-added module keys so existing DBs stay up to date
+            try:
+                current = _json.loads(row[1]) if isinstance(row[1], str) else (row[1] or [])
+            except Exception:
+                current = []
+            merged = list(current) + [k for k in expected_keys if k not in current]
+            if merged != current:
+                conn.execute(
+                    text("UPDATE role_definitions SET module_keys=:m WHERE id=:id"),
+                    {"m": _json.dumps(merged), "id": row[0]},
+                )
+
+
+def _ensure_default_users(conn) -> None:
+    import bcrypt as _bcrypt  # noqa: PLC0415
+    defaults = [
+        ("admin", "admin20260!", "admin"),
+        ("user", "user123", "user"),
+    ]
+    for username, password, role in defaults:
+        exists = conn.execute(
+            text("SELECT 1 FROM users WHERE username=:u"), {"u": username}
+        ).scalar()
+        if not exists:
+            pw_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+            conn.execute(
+                text(
+                    "INSERT INTO users(username, password_hash, role, is_active, created_at) "
+                    "VALUES(:u, :h, :r, 1, datetime('now'))"
+                ),
+                {"u": username, "h": pw_hash, "r": role},
+            )
+
+
 def _ensure_default_material_products(conn) -> None:
     for name in DEFAULT_PRODUCT_CATALOGS:
         conn.execute(
@@ -296,6 +350,44 @@ def _ensure_schema_compatibility() -> None:
             conn.execute(
                 text("ALTER TABLE settings ADD COLUMN asr_model TEXT DEFAULT 'small'")
             )
+        if "asr_compute_type" not in settings_column_names:
+            conn.execute(
+                text("ALTER TABLE settings ADD COLUMN asr_compute_type TEXT DEFAULT 'auto'")
+            )
+        if "video_encoder_mode" not in settings_column_names:
+            conn.execute(
+                text("ALTER TABLE settings ADD COLUMN video_encoder_mode TEXT DEFAULT 'auto'")
+            )
+
+        # ── source_video_entries: asr_compute_type_used ───────────────
+        if "asr_compute_type_used" not in source_column_names:
+            conn.execute(
+                text("ALTER TABLE source_video_entries ADD COLUMN asr_compute_type_used TEXT")
+            )
+
+        # ── tasks: 4 个执行环境字段 ──────────────────────────────────
+        task_columns = conn.execute(text("PRAGMA table_info(tasks)")).fetchall()
+        task_column_names = {row[1] for row in task_columns}
+        for col, ddl in [
+            ("asr_model_used", "TEXT"),
+            ("asr_compute_type_used", "TEXT"),
+            ("video_encoder_used", "TEXT"),
+            ("video_resolution_used", "TEXT"),
+        ]:
+            if col not in task_column_names:
+                conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}"))
+
+        # ── rough_cut_projects: 4 个执行环境字段 ─────────────────────
+        rcp_columns = conn.execute(text("PRAGMA table_info(rough_cut_projects)")).fetchall()
+        rcp_column_names = {row[1] for row in rcp_columns}
+        for col, ddl in [
+            ("asr_model_used", "TEXT"),
+            ("asr_compute_type_used", "TEXT"),
+            ("video_encoder_used", "TEXT"),
+            ("video_resolution_used", "TEXT"),
+        ]:
+            if col not in rcp_column_names:
+                conn.execute(text(f"ALTER TABLE rough_cut_projects ADD COLUMN {col} {ddl}"))
 
         material_columns = conn.execute(text("PRAGMA table_info(materials)")).fetchall()
         material_column_names = {row[1] for row in material_columns}
@@ -331,6 +423,72 @@ def _ensure_schema_compatibility() -> None:
                 "WHERE library_kind NOT IN ('general', 'product', 'unfiled')"
             )
         )
+        # users table
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS users ("
+            "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
+            "username VARCHAR(100) NOT NULL UNIQUE, "
+            "password_hash VARCHAR(255) NOT NULL, "
+            "role VARCHAR(20) NOT NULL DEFAULT 'user', "
+            "is_active INTEGER NOT NULL DEFAULT 1, "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users(username)"
+        ))
+        _ensure_default_users(conn)
+
+        # role_definitions table
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS role_definitions ("
+            "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
+            "name VARCHAR(50) NOT NULL UNIQUE, "
+            "display_name VARCHAR(100) NOT NULL, "
+            "is_system INTEGER NOT NULL DEFAULT 0, "
+            "module_keys TEXT NOT NULL DEFAULT '[]', "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_role_definitions_name ON role_definitions(name)"
+        ))
+        _ensure_default_roles(conn)
+
+        # audit_logs table (CREATE IF NOT EXISTS covers new installs;
+        # ALTER TABLE handles existing DBs that pre-date this feature)
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS audit_logs ("
+            "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
+            "method VARCHAR(10) NOT NULL, "
+            "path VARCHAR(512) NOT NULL, "
+            "action VARCHAR(200) NOT NULL, "
+            "entity_type VARCHAR(50), "
+            "entity_id VARCHAR(50), "
+            "status_code INTEGER NOT NULL DEFAULT 0, "
+            "ip_address VARCHAR(45), "
+            "user_agent VARCHAR(512), "
+            "operator VARCHAR(100), "
+            "source VARCHAR(20) NOT NULL DEFAULT 'user', "
+            "duration_ms INTEGER, "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs(created_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_type ON audit_logs(entity_type)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_operator ON audit_logs(operator)"
+        ))
+        audit_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(audit_logs)")).fetchall()}
+        if "source" not in audit_cols:
+            conn.execute(text("ALTER TABLE audit_logs ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'user'"))
+        if "duration_ms" not in audit_cols:
+            conn.execute(text("ALTER TABLE audit_logs ADD COLUMN duration_ms INTEGER"))
+
         if _needs_material_table_rebuild(conn):
             _rebuild_materials_table(conn)
         _ensure_material_indexes(conn)
@@ -339,19 +497,51 @@ def _ensure_schema_compatibility() -> None:
         _ensure_material_folder_bindings(conn)
 
 
+def _make_engine(settings: Settings):
+    url = settings.database_url
+    key = settings.db_encryption_key.strip()
+
+    if key and url.startswith("sqlite"):
+        try:
+            import sqlcipher3.dbapi2 as sqlcipher  # type: ignore
+
+            raw_path = url.replace("sqlite:///", "").lstrip("/")
+            import os as _os
+            db_path = _os.path.abspath(raw_path)
+            safe_key = key.replace("'", "''")
+
+            def _creator():
+                conn = sqlcipher.connect(db_path)
+                conn.execute(f"PRAGMA key='{safe_key}'")
+                conn.execute("PRAGMA foreign_keys=ON")
+                return conn
+
+            import logging as _log
+            _log.getLogger(__name__).info("Database encryption enabled (SQLCipher).")
+            return create_engine("sqlite://", creator=_creator)
+        except ImportError:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "DB_ENCRYPTION_KEY is set but sqlcipher3 is not installed — "
+                "running unencrypted. Install sqlcipher3-binary to enable encryption."
+            )
+
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    return create_engine(url, connect_args=connect_args)
+
+
 def init_db(settings: Settings) -> None:
     global engine
     if engine is not None:
         return
 
-    connect_args = {}
-    if settings.database_url.startswith("sqlite"):
-        connect_args = {"check_same_thread": False}
-
-    engine = create_engine(settings.database_url, connect_args=connect_args)
+    engine = _make_engine(settings)
     SessionLocal.configure(bind=engine)
 
+    from .audit_log import AuditLog  # noqa: F401
+    from .role_definition import RoleDefinition  # noqa: F401
     from .config_template import ConfigTemplate  # noqa: F401
+    from .user import User  # noqa: F401
     from .material import Material  # noqa: F401
     from .material_folder_binding import MaterialFolderBinding  # noqa: F401
     from .material_product import MaterialProduct  # noqa: F401

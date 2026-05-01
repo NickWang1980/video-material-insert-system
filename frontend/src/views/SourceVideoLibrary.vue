@@ -58,10 +58,14 @@
                 下载
               </el-button>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <el-tag :type="asrTagType(row)" size="small">
                 ASR {{ asrStatusText(row) }} {{ subtitleCountText(row, "asr") }}
               </el-tag>
+              <ExecutionMetaTags
+                :model="row.asr_model_used || ''"
+                :compute="row.asr_compute_type_used || ''"
+              />
               <span class="text-xs text-gray-500">{{ asrRetryText(row) }}</span>
               <el-button
                 size="small"
@@ -176,6 +180,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus";
 
 import FileUpload from "../components/common/FileUpload.vue";
+import ExecutionMetaTags from "../components/common/ExecutionMetaTags.vue";
 import { useSourceVideoStore } from "../store/modules/sourceVideo";
 
 const sourceVideoStore = useSourceVideoStore();

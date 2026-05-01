@@ -709,3 +709,10 @@ function materialPathTag(material) {
   box-shadow: inset 0 0 0 1px #60a5fa;
 }
 </style>
+
+<style>
+html.glass .material-folder-drop-active {
+  background: rgba(96, 165, 250, 0.12) !important;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.45) !important;
+}
+</style>

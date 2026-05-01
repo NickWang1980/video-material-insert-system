@@ -35,6 +35,10 @@ class TaskResponse(BaseModel):
 
     output_path: str | None = None
     report_path: str | None = None
+    asr_model_used: str | None = None
+    asr_compute_type_used: str | None = None
+    video_encoder_used: str | None = None
+    video_resolution_used: str | None = None
     video_width: int | None = None
     video_height: int | None = None
     video_aspect_ratio: str | None = None

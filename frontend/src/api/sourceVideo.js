@@ -1,4 +1,4 @@
-import { api } from "./index";
+import { api, withAuthToken } from "./index";
 
 export async function listSourceVideos() {
   const { data } = await api.get("/source-videos");
@@ -33,12 +33,12 @@ export async function retrySourceVideoAsr(id) {
 
 export function downloadSourceVideoAudioUrl(id, format = "wav") {
   const safeFormat = format === "flac" ? "flac" : "wav";
-  return `/api/source-videos/${id}/audio?format=${safeFormat}`;
+  return withAuthToken(`/api/source-videos/${id}/audio?format=${safeFormat}`);
 }
 
 export function downloadSourceVideoSubtitleUrl(id, source = "uploaded") {
   const safeSource = source === "asr" ? "asr" : "uploaded";
-  return `/api/source-videos/${id}/subtitle?source=${safeSource}`;
+  return withAuthToken(`/api/source-videos/${id}/subtitle?source=${safeSource}`);
 }
 
 export async function getParsedSubtitle(id, source = "uploaded") {

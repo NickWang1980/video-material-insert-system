@@ -1,7 +1,19 @@
 <template>
   <el-table :data="items" stripe style="width: 100%">
     <el-table-column prop="id" label="ID" width="80" />
-    <el-table-column prop="task_name" label="任务名称" min-width="180" />
+    <el-table-column prop="task_name" label="任务名称" min-width="220">
+      <template #default="{ row }">
+        <div class="space-y-1">
+          <div>{{ row.task_name }}</div>
+          <ExecutionMetaTags
+            :model="row.asr_model_used || ''"
+            :compute="row.asr_compute_type_used || ''"
+            :encoder="row.video_encoder_used || ''"
+            :resolution="row.video_resolution_used || ''"
+          />
+        </div>
+      </template>
+    </el-table-column>
     <el-table-column label="状态" width="120">
       <template #default="{ row }">
         <StatusTag :status="row.status" />
@@ -80,6 +92,7 @@ import { ElMessage } from "element-plus";
 
 import StatusTag from "../common/StatusTag.vue";
 import ProgressBar from "../common/ProgressBar.vue";
+import ExecutionMetaTags from "../common/ExecutionMetaTags.vue";
 import { downloadLogUrl, downloadOutputUrl, downloadReportUrl } from "../../api/task";
 
 defineProps({

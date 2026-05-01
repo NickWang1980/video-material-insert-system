@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Settings
+from ..utils.encoder_utils import build_video_encode_args
 from ..utils.logger import get_logger
 from .material_service import MatchEvent
 
@@ -102,6 +103,7 @@ def strip_video_audio(
     *,
     input_path: str,
     output_path: str,
+    video_encoder_mode: str = "auto",
 ) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     cmd_copy = [
@@ -125,17 +127,10 @@ def strip_video_audio(
         return
 
     cmd_reencode = [
-        settings.ffmpeg_bin,
-        "-y",
-        "-i",
-        input_path,
-        "-an",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
+        settings.ffmpeg_bin, "-y", "-i", input_path, "-an",
+        *build_video_encode_args(
+            video_encoder_mode, settings.ffmpeg_bin, preset="veryfast", crf=23
+        ),
         output_path,
     ]
     proc_reencode = subprocess.run(
@@ -228,6 +223,7 @@ def build_ffmpeg_command(
     resolution: str,
     video_bitrate_kbps: int,
     add_subtitle_to_video: bool = False,
+    video_encoder_mode: str = "auto",
 ) -> list[str]:
     success_events = [event for event in events if event.status == "success" and event.material_path]
     video_probe = probe_video(settings, video_path)
@@ -395,10 +391,12 @@ def build_ffmpeg_command(
         filter_complex,
         "-map",
         f"[{video_output_label}]",
-        "-c:v",
-        "libx264",
-        "-b:v",
-        f"{int(video_bitrate_kbps)}k",
+        *build_video_encode_args(
+            video_encoder_mode,
+            settings.ffmpeg_bin,
+            preset="veryfast",
+            bitrate_kbps=int(video_bitrate_kbps),
+        ),
     ]
 
     if has_sound_effect:

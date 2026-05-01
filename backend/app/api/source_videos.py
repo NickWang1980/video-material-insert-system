@@ -91,6 +91,7 @@ def _entry_to_response(entry: SourceVideoEntry) -> SourceVideoEntryResponse:
         subtitle_line_count_user=entry.subtitle_line_count_user,
         subtitle_line_count_asr=entry.subtitle_line_count_asr,
         asr_model_used=entry.asr_model_used,
+        asr_compute_type_used=getattr(entry, "asr_compute_type_used", None),
         has_wav=has_wav,
         has_flac=has_flac,
         has_uploaded_srt=has_uploaded_srt,

@@ -4,7 +4,7 @@ import csv
 import io
 from typing import Any
 
-REQUIRED_HEADERS = ["关键词", "素材文件名", "素材类型"]
+REQUIRED_HEADERS = ["关键字", "素材文件名", "素材类型"]
 
 ALLOWED_MATERIAL_TYPES = {"图片", "GIF", "短视频"}
 ALLOWED_TRIGGER_RULES = {"首次触发", "每次触发"}
@@ -29,7 +29,7 @@ def parse_config_csv_bytes(content: bytes) -> list[dict[str, Any]]:
 
     items: list[dict[str, Any]] = []
     for row in reader:
-        keyword = (row.get("关键词") or "").strip()
+        keyword = (row.get("关键字") or row.get("关键词") or "").strip()
         material_name = (row.get("素材文件名") or "").strip()
         material_type = (row.get("素材类型") or "").strip()
         cue_sound = (row.get("提示音") or "随机").strip() or "随机"
@@ -103,7 +103,7 @@ def parse_config_csv_bytes(content: bytes) -> list[dict[str, Any]]:
 
         items.append(
             {
-                "关键词": keyword,
+                "关键字": keyword,
                 "素材库分类": library_scope,
                 "产品目录": product_name,
                 "脚本子文件夹": script_folder,

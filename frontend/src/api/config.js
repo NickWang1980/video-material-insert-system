@@ -1,4 +1,4 @@
-import { api } from "./index";
+import { api, withAuthToken } from "./index";
 
 export async function listTemplates() {
   const { data } = await api.get("/config-templates");
@@ -33,5 +33,5 @@ export async function importCsv(file) {
 }
 
 export function exportCsvUrl(id) {
-  return `/api/config-templates/${id}/export`;
+  return withAuthToken(`/api/config-templates/${id}/export`);
 }

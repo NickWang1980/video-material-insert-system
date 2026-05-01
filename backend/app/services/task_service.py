@@ -697,12 +697,29 @@ def process_task(settings: Settings, task_id: int) -> None:
                 _clear_stop_requested(task_id)
                 return
 
+            words_index = None
+            if (task.subtitle_source or "").strip().lower() == "asr":
+                words_json_path = Path(task.subtitle_path).with_suffix(".words.json")
+                if words_json_path.exists():
+                    try:
+                        payload = json.loads(words_json_path.read_text(encoding="utf-8"))
+                        words_index = payload.get("words") if isinstance(payload, dict) else None
+                        time_offset = float(settings_row.subtitle_time_offset_seconds)
+                        if words_index and time_offset:
+                            words_index = [
+                                {**w, "start": w["start"] + time_offset, "end": w["end"] + time_offset}
+                                for w in words_index
+                            ]
+                    except Exception:
+                        words_index = None
+
             collision_priority_by_subtitle = get_task_collision_priority(db, task.id)
             events = build_match_events(
                 db,
                 subtitles,
                 config_snapshot,
                 collision_priority_by_subtitle=collision_priority_by_subtitle,
+                words_index=words_index,
             )
             events = attach_random_sound_effects(db, events)
 
@@ -730,6 +747,17 @@ def process_task(settings: Settings, task_id: int) -> None:
                 / f"output_{task_id}_{_timestamp()}.{output_ext}"
             )
 
+            encoder_mode = getattr(settings_row, "video_encoder_mode", "auto") or "auto"
+            from ..utils.encoder_utils import get_active_codec
+            from .asr_service import resolved_compute_label
+            task.asr_model_used = settings_row.asr_model
+            task.asr_compute_type_used = resolved_compute_label(
+                getattr(settings_row, "asr_compute_type", "auto") or "auto"
+            )
+            task.video_encoder_used = get_active_codec(encoder_mode, settings.ffmpeg_bin)
+            task.video_resolution_used = settings_row.resolution
+            db.commit()
+
             ffmpeg_cmd = build_ffmpeg_command(
                 settings,
                 video_path=task.video_path,
@@ -741,6 +769,7 @@ def process_task(settings: Settings, task_id: int) -> None:
                 resolution=settings_row.resolution,
                 video_bitrate_kbps=int(settings_row.video_bitrate_kbps),
                 add_subtitle_to_video=bool(task.add_subtitle_to_video),
+                video_encoder_mode=encoder_mode,
             )
 
             task.progress = 75

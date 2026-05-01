@@ -168,3 +168,362 @@ html.dark .hover\:bg-gray-100:hover {
 html.dark .shadow-card {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
+
+/* ══════════════════════════════════════════════════
+   Liquid Glass theme
+   ══════════════════════════════════════════════════ */
+
+/* ── Element Plus CSS variable overrides ── */
+html.glass {
+  --el-bg-color:               rgba(255, 255, 255, 0.09);
+  --el-bg-color-page:          transparent;
+  --el-bg-color-overlay:       rgba(18, 10, 48, 0.88);
+
+  --el-text-color-primary:     rgba(255, 255, 255, 0.95);
+  --el-text-color-regular:     rgba(255, 255, 255, 0.82);
+  --el-text-color-secondary:   rgba(255, 255, 255, 0.58);
+  --el-text-color-placeholder: rgba(255, 255, 255, 0.36);
+  --el-text-color-disabled:    rgba(255, 255, 255, 0.25);
+
+  --el-border-color:            rgba(255, 255, 255, 0.18);
+  --el-border-color-light:      rgba(255, 255, 255, 0.12);
+  --el-border-color-lighter:    rgba(255, 255, 255, 0.08);
+  --el-border-color-extra-light:rgba(255, 255, 255, 0.05);
+  --el-border-color-dark:       rgba(255, 255, 255, 0.28);
+  --el-border-color-darker:     rgba(255, 255, 255, 0.40);
+
+  --el-fill-color:              rgba(255, 255, 255, 0.10);
+  --el-fill-color-blank:        rgba(255, 255, 255, 0.05);
+  --el-fill-color-light:        rgba(255, 255, 255, 0.09);
+  --el-fill-color-lighter:      rgba(255, 255, 255, 0.06);
+  --el-fill-color-extra-light:  rgba(255, 255, 255, 0.04);
+  --el-fill-color-dark:         rgba(255, 255, 255, 0.14);
+  --el-fill-color-darker:       rgba(255, 255, 255, 0.20);
+
+  --el-table-tr-bg-color:          transparent;
+  --el-table-row-hover-bg-color:   rgba(255, 255, 255, 0.08);
+  --el-table-header-bg-color:      rgba(255, 255, 255, 0.06);
+  --el-table-border-color:         rgba(255, 255, 255, 0.10);
+  --el-table-text-color:           rgba(255, 255, 255, 0.88);
+  --el-table-header-text-color:    rgba(255, 255, 255, 0.58);
+
+  --el-input-bg-color:             rgba(255, 255, 255, 0.08);
+  --el-input-border-color:         rgba(255, 255, 255, 0.22);
+  --el-input-hover-border-color:   rgba(255, 255, 255, 0.40);
+  --el-input-focus-border-color:   rgba(255, 255, 255, 0.65);
+  --el-input-text-color:           rgba(255, 255, 255, 0.95);
+  --el-input-placeholder-color:    rgba(255, 255, 255, 0.36);
+
+  --el-select-option-hover-background:    rgba(255, 255, 255, 0.08);
+  --el-select-option-selected-font-color: rgba(255, 255, 255, 0.95);
+
+  --el-dialog-bg-color: rgba(14, 8, 38, 0.72);
+
+  --el-popper-theme-bg-color:     rgba(14, 8, 38, 0.90);
+  --el-popper-theme-text-color:   rgba(255, 255, 255, 0.88);
+  --el-popper-theme-border-color: rgba(255, 255, 255, 0.14);
+
+  --el-tag-bg-color:     rgba(255, 255, 255, 0.10);
+  --el-tag-border-color: rgba(255, 255, 255, 0.18);
+  --el-tag-text-color:   rgba(255, 255, 255, 0.90);
+}
+
+/* ── Animated gradient background ── */
+html.glass,
+html.glass body {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+html.glass body {
+  background: linear-gradient(-45deg, #0d0d1a, #1a0533, #080f28, #1c083a) !important;
+  background-size: 400% 400% !important;
+  animation: glass-bg-drift 22s ease infinite;
+  min-height: 100vh;
+}
+
+@keyframes glass-bg-drift {
+  0%   { background-position: 0%   50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0%   50%; }
+}
+
+/* App shell wrapper */
+.glass-app-shell {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* ── Layout chrome ── */
+html.glass aside {
+  background: rgba(255, 255, 255, 0.07) !important;
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+html.glass header {
+  background: rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* ── Tailwind utility overrides ── */
+html.glass .bg-white {
+  background: rgba(255, 255, 255, 0.07) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+html.glass .bg-gray-50  { background: rgba(255, 255, 255, 0.08) !important; }
+html.glass .bg-gray-100 { background: rgba(255, 255, 255, 0.11) !important; }
+
+/* 混剪单元 / generic interactive cards (button elements inside panels) */
+html.glass button.bg-gray-50 {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+html.glass button.bg-gray-50:hover {
+  background: rgba(255, 255, 255, 0.17) !important;
+  border-color: rgba(255, 255, 255, 0.30) !important;
+}
+/* Active card — violet accent so it stands out against the dark glass backdrop */
+html.glass button.bg-black {
+  background: rgba(139, 92, 246, 0.38) !important;
+  border-color: rgba(167, 139, 250, 0.85) !important;
+  color: rgba(255, 255, 255, 0.97) !important;
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.25),
+    0 4px 20px rgba(139, 92, 246, 0.30) !important;
+}
+/* Reinforce selected-card text opacity variants in glass mode */
+html.glass button.bg-black .text-white\/75 { color: rgba(255, 255, 255, 0.75) !important; }
+html.glass button.bg-black .text-white\/80 { color: rgba(255, 255, 255, 0.80) !important; }
+
+html.glass .border-gray-100,
+html.glass .border-gray-200 { border-color: rgba(255, 255, 255, 0.10) !important; }
+
+html.glass .text-black,
+html.glass .text-gray-900 { color: rgba(255, 255, 255, 0.95) !important; }
+html.glass .text-gray-800 { color: rgba(255, 255, 255, 0.88) !important; }
+html.glass .text-gray-700 { color: rgba(255, 255, 255, 0.80) !important; }
+html.glass .text-gray-600 { color: rgba(255, 255, 255, 0.65) !important; }
+html.glass .text-gray-500 { color: rgba(255, 255, 255, 0.55) !important; }
+html.glass .text-gray-400 { color: rgba(255, 255, 255, 0.42) !important; }
+
+html.glass .hover\:bg-gray-50:hover  { background: rgba(255, 255, 255, 0.07) !important; }
+html.glass .hover\:bg-gray-100:hover { background: rgba(255, 255, 255, 0.11) !important; }
+
+html.glass .shadow-card {
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Active sidebar nav item — scope to <aside> only so video-player bg-black divs stay dark */
+html.glass aside .bg-black {
+  background: rgba(255, 255, 255, 0.88) !important;
+  color: #0d0d1a !important;
+}
+
+/* Selection badge (bg-white/90 Tailwind opacity variant) */
+html.glass .bg-white\/90 {
+  background: rgba(255, 255, 255, 0.14) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+
+/* border-black on selected items → violet rim on dark glass */
+html.glass .border-black {
+  border-color: rgba(167, 139, 250, 0.80) !important;
+}
+
+/* ── El-card ── */
+html.glass .el-card {
+  background: rgba(255, 255, 255, 0.07) !important;
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 8px 32px rgba(0, 0, 0, 0.22) !important;
+}
+html.glass .el-card__header {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* ── El-table ── */
+html.glass .el-table,
+html.glass .el-table tr,
+html.glass .el-table .el-table__inner-wrapper {
+  background: transparent !important;
+}
+html.glass .el-table th.el-table__cell {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+html.glass .el-table td.el-table__cell {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+html.glass .el-table--border::after,
+html.glass .el-table--border::before,
+html.glass .el-table__inner-wrapper::before {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── El-input / textarea ── */
+html.glass .el-input__wrapper,
+html.glass .el-textarea__inner {
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.20) inset !important;
+}
+html.glass .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.36) inset !important;
+}
+html.glass .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.62) inset !important;
+}
+html.glass .el-input__inner {
+  color: rgba(255, 255, 255, 0.95) !important;
+  caret-color: white;
+}
+
+/* ── El-select dropdown ── */
+html.glass .el-select-dropdown,
+html.glass .el-date-picker,
+html.glass .el-date-range-picker,
+html.glass .el-dropdown-menu {
+  background: rgba(14, 8, 38, 0.92) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+html.glass .el-select-dropdown__item,
+html.glass .el-dropdown-menu__item { color: rgba(255, 255, 255, 0.82) !important; }
+html.glass .el-select-dropdown__item.selected { color: #fff !important; font-weight: 600; }
+html.glass .el-dropdown-menu__item:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  color: #fff !important;
+}
+
+/* ── El-dialog ── */
+html.glass .el-dialog {
+  background: rgba(14, 8, 38, 0.72) !important;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 24px 64px rgba(0, 0, 0, 0.55) !important;
+}
+html.glass .el-dialog__header { border-color: rgba(255, 255, 255, 0.10) !important; }
+
+/* ── El-button (default variant) ── */
+html.glass .el-button--default {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+html.glass .el-button--default:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.36) !important;
+  color: #fff !important;
+}
+
+/* ── El-tag ── */
+html.glass .el-tag {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+/* ── El-pagination ── */
+html.glass .el-pagination .el-pager li,
+html.glass .el-pagination .btn-prev,
+html.glass .el-pagination .btn-next {
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: rgba(255, 255, 255, 0.72) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+html.glass .el-pagination .el-pager li.is-active {
+  background: rgba(139, 92, 246, 0.65) !important;
+  border-color: rgba(167, 139, 250, 0.75) !important;
+  color: #fff !important;
+}
+html.glass .el-pagination .el-pager li:not(.is-active):hover {
+  color: #fff !important;
+}
+
+/* ── Scrollbar ── */
+html.glass ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
+html.glass ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+html.glass ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+
+/* ── El-tree — selected / current node ── */
+html.glass .el-tree-node.is-current > .el-tree-node__content {
+  background: rgba(139, 92, 246, 0.38) !important;
+  color: rgba(255, 255, 255, 0.97) !important;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35) inset;
+}
+html.glass .el-tree-node__content:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-radius: 6px;
+}
+html.glass .el-tree {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+html.glass .el-tree-node__label { color: rgba(255, 255, 255, 0.88) !important; }
+
+/* ── El-empty illustration — hollow / glass style ── */
+html.glass .el-empty__image svg path,
+html.glass .el-empty__image svg rect,
+html.glass .el-empty__image svg ellipse,
+html.glass .el-empty__image svg polygon {
+  fill: rgba(255, 255, 255, 0.06) !important;
+  stroke: rgba(255, 255, 255, 0.30) !important;
+  stroke-width: 1px;
+}
+/* Keep the shadow ellipse subtle */
+html.glass .el-empty__image svg ellipse {
+  fill: rgba(139, 92, 246, 0.12) !important;
+  stroke: none !important;
+}
+html.glass .el-empty__description p,
+html.glass .el-empty__description {
+  color: rgba(255, 255, 255, 0.50) !important;
+}
+
+/* ── El-alert ── */
+html.glass .el-alert {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+html.glass .el-alert--info {
+  background: rgba(139, 92, 246, 0.12) !important;
+  border-color: rgba(167, 139, 250, 0.25) !important;
+}
+html.glass .el-alert--warning {
+  background: rgba(245, 158, 11, 0.14) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+html.glass .el-alert .el-alert__title,
+html.glass .el-alert .el-alert__description {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+html.glass .el-alert .el-alert__icon { color: rgba(255, 255, 255, 0.65) !important; }
+
+/* ── Material cards (thumbnail grid) ── */
+html.glass .material-card-hoverable {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+html.glass .material-card-hoverable:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(167, 139, 250, 0.45) !important;
+}

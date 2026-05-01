@@ -38,6 +38,8 @@ class RoleAsset(BaseModel):
     errorPercent: float = 100.0
     manualGatePassed: bool = False
     gatePassed: bool = False
+    asrModelUsed: str | None = None
+    asrComputeTypeUsed: str | None = None
 
 
 class CompareAssetItem(BaseModel):
@@ -158,6 +160,10 @@ class RoughCutProjectResponse(BaseModel):
     previewUrl: str | None = None
     outputUrl: str | None = None
     stageSummary: str | None = None
+    asrModelUsed: str | None = None
+    asrComputeTypeUsed: str | None = None
+    videoEncoderUsed: str | None = None
+    videoResolutionUsed: str | None = None
     createdAt: datetime
     updatedAt: datetime
 
@@ -233,5 +239,14 @@ class FfmpegStatusResponse(BaseModel):
     blockedProjectIds: list[int] = Field(default_factory=list)
 
 
+class AsrStatusResponse(BaseModel):
+    runningCount: int = 0
+    queuedCount: int = 0
+    maxConcurrent: int = 2
+    totalActive: int = 0
+    loadedModels: list[str] = Field(default_factory=list)
+
+
 class ListProjectsResponse(BaseModel):
     items: list[RoughCutProjectResponse] = Field(default_factory=list)
+    total: int = 0

@@ -27,6 +27,10 @@ class RoughCutProject(Base):
     log_text: Mapped[str] = mapped_column(Text, default="")
     preview_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     output_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    asr_model_used: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    asr_compute_type_used: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    video_encoder_used: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    video_resolution_used: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
