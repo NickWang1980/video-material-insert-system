@@ -15,83 +15,85 @@
           {{ cat.label }}
           <span class="text-xs text-gray-400 ml-1">({{ cat.item_count }})</span>
         </template>
-
-        <div class="grid grid-cols-12 gap-4" style="min-height: 600px">
-          <!-- 左侧 item 列表 -->
-          <div class="col-span-3 border border-gray-200 rounded-lg overflow-hidden flex flex-col">
-            <div class="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-              <span class="text-sm font-medium">日志条目</span>
-              <el-button size="small" text @click="loadItems(cat.key)" :loading="loadingItems">刷新</el-button>
-            </div>
-            <div class="flex-1 overflow-auto" style="max-height: 700px">
-              <div
-                v-for="item in items"
-                :key="item.id"
-                class="px-3 py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
-                :class="selectedItemId === item.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''"
-                @click="selectItem(item)"
-              >
-                <div class="text-xs font-mono break-all">{{ item.name }}</div>
-                <div class="text-xs text-gray-500 mt-1">
-                  {{ formatSize(item.size_bytes) }} · {{ formatTime(item.mtime_ts) }}
-                </div>
-              </div>
-              <div v-if="!items.length && !loadingItems" class="text-center text-xs text-gray-400 py-6">
-                暂无日志
-              </div>
-            </div>
-          </div>
-
-          <!-- 右侧内容 -->
-          <div class="col-span-9 border border-gray-200 rounded-lg overflow-hidden flex flex-col">
-            <div class="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
-              <div class="flex items-center gap-3 text-sm">
-                <span v-if="selected" class="font-medium">{{ selected.name }}</span>
-                <span v-if="selected" class="text-xs text-gray-500">
-                  {{ formatSize(selected.size_bytes || 0) }}
-                  · 显示末尾 {{ tailLines }} 行
-                  <el-tag v-if="content?.is_truncated" type="warning" size="small" class="ml-1">已截断</el-tag>
-                </span>
-                <span v-else class="text-gray-400">请从左侧选择一个日志</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <el-input-number
-                  v-model="tailLines"
-                  :min="100"
-                  :max="100000"
-                  :step="500"
-                  size="small"
-                  controls-position="right"
-                  style="width: 130px"
-                  :disabled="!selected"
-                  @change="reloadContent"
-                />
-                <el-checkbox v-model="autoRefresh" :disabled="!selected" size="small">自动刷新 2s</el-checkbox>
-                <el-button size="small" :disabled="!selected" :loading="loadingContent" @click="reloadContent">
-                  刷新
-                </el-button>
-                <el-button size="small" :disabled="!selected || !content?.content" @click="copyContent">
-                  复制
-                </el-button>
-                <el-button
-                  size="small"
-                  type="primary"
-                  :disabled="!selected"
-                  tag="a"
-                  @click="downloadFull"
-                >下载完整</el-button>
-              </div>
-            </div>
-            <div class="flex-1 overflow-auto bg-gray-900 text-gray-100" style="max-height: 700px">
-              <pre
-                ref="contentRef"
-                class="text-xs font-mono p-3 m-0 whitespace-pre-wrap break-all"
-              >{{ content?.content || (selected ? '（空）' : '') }}</pre>
-            </div>
-          </div>
-        </div>
       </el-tab-pane>
     </el-tabs>
+
+    <div class="grid grid-cols-12 gap-4" style="min-height: 600px">
+      <!-- 左侧 item 列表 -->
+      <div class="col-span-3 border border-gray-200 rounded-lg overflow-hidden flex flex-col">
+        <div class="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          <span class="text-sm font-medium">日志条目</span>
+          <el-button
+            size="small"
+            text
+            @click="loadItems(activeCategory)"
+            :loading="loadingItems"
+            :disabled="!activeCategory"
+          >刷新</el-button>
+        </div>
+        <div class="flex-1 overflow-auto" style="max-height: 700px">
+          <div
+            v-for="item in items"
+            :key="item.id"
+            class="px-3 py-2 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
+            :class="selectedItemId === item.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''"
+            @click="selectItem(item)"
+          >
+            <div class="text-xs font-mono break-all">{{ item.name }}</div>
+            <div class="text-xs text-gray-500 mt-1">
+              {{ formatSize(item.size_bytes) }} · {{ formatTime(item.mtime_ts) }}
+            </div>
+          </div>
+          <div v-if="!items.length && !loadingItems" class="text-center text-xs text-gray-400 py-6">
+            暂无日志
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧内容 -->
+      <div class="col-span-9 border border-gray-200 rounded-lg overflow-hidden flex flex-col">
+        <div class="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-3 text-sm">
+            <span v-if="selected" class="font-medium">{{ selected.name }}</span>
+            <span v-if="selected" class="text-xs text-gray-500">
+              {{ formatSize(selected.size_bytes || 0) }}
+              · 显示末尾 {{ tailLines }} 行
+              <el-tag v-if="content?.is_truncated" type="warning" size="small" class="ml-1">已截断</el-tag>
+            </span>
+            <span v-else class="text-gray-400">请从左侧选择一个日志</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <el-input-number
+              v-model="tailLines"
+              :min="100"
+              :max="100000"
+              :step="500"
+              size="small"
+              controls-position="right"
+              style="width: 130px"
+              :disabled="!selected"
+              @change="reloadContent"
+            />
+            <el-checkbox v-model="autoRefresh" :disabled="!selected" size="small">自动刷新 2s</el-checkbox>
+            <el-button size="small" :disabled="!selected" :loading="loadingContent" @click="reloadContent">
+              刷新
+            </el-button>
+            <el-button size="small" :disabled="!selected || !content?.content" @click="copyContent">
+              复制
+            </el-button>
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="!selected"
+              @click="downloadFull"
+            >下载完整</el-button>
+          </div>
+        </div>
+        <div ref="contentScrollRef" class="flex-1 overflow-auto bg-gray-900 text-gray-100" style="max-height: 700px">
+          <pre class="text-xs font-mono p-3 m-0 whitespace-pre-wrap break-all">{{ content?.content || (selected ? '（空）' : '') }}</pre>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -110,7 +112,7 @@ const content = ref(null);
 const loadingContent = ref(false);
 const tailLines = ref(1000);
 const autoRefresh = ref(false);
-const contentRef = ref(null);
+const contentScrollRef = ref(null);
 
 let refreshTimer = null;
 
@@ -182,15 +184,21 @@ async function reloadContent() {
       selected.value.id,
       tailLines.value
     );
-    await nextTick();
-    // 自动滚到底（tail 视图常用）
-    if (contentRef.value) {
-      contentRef.value.parentElement.scrollTop = contentRef.value.parentElement.scrollHeight;
-    }
   } catch (e) {
     ElMessage.error(`加载内容失败：${e?.message || e}`);
+    return;
   } finally {
     loadingContent.value = false;
+  }
+  // 滚到底（tail 视图常用）；放在 try/catch 外，且失败不影响数据展示
+  try {
+    await nextTick();
+    const el = contentScrollRef.value;
+    if (el && typeof el.scrollTop === "number") {
+      el.scrollTop = el.scrollHeight;
+    }
+  } catch {
+    /* ignore scroll errors */
   }
 }
 
