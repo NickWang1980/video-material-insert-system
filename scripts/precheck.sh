@@ -28,6 +28,35 @@ log_fail() { echo -e "${PREFIX} ${C_RED}❌${C_RESET}  $*";    fail_count=$((fai
 log_dl()   { echo -e "${PREFIX} ${C_CYAN}⬇️ ${C_RESET} $*"; }
 log_info() { echo -e "${PREFIX}      $*"; }
 
+# ─── 确保 backend/.env 存在 ──────────────────────────────────────────────────
+ensure_env_file() {
+  local env_file="$PROJECT_ROOT/backend/.env"
+  local example_file="$PROJECT_ROOT/backend/.env.example"
+  if [ ! -f "$env_file" ]; then
+    if [ -f "$example_file" ]; then
+      cp "$example_file" "$env_file"
+      log_warn "backend/.env 不存在 — 已从 .env.example 创建"
+    fi
+  fi
+}
+ensure_env_file
+
+# ─── .env 单键写入（保留其它行）──────────────────────────────────────────────
+set_env_var() {
+  local file="$1" key="$2" val="$3"
+  [ -f "$file" ] || return 1
+  if grep -qE "^[[:space:]]*${key}=" "$file" 2>/dev/null; then
+    local tmp="${file}.precheck.tmp"
+    awk -v k="$key" -v v="$val" '
+      $0 ~ "^[[:space:]]*"k"=" { print k"="v; next }
+      { print }
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+  else
+    [ -s "$file" ] && [ -n "$(tail -c1 "$file" 2>/dev/null)" ] && printf '\n' >> "$file"
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+
 # ─── 读取 backend/.env ───────────────────────────────────────────────────────
 load_env() {
   local env_file="$PROJECT_ROOT/backend/.env"
@@ -369,6 +398,47 @@ ensure_ffmpeg() {
 }
 
 ensure_ffmpeg
+
+# 把本地安装路径写回 backend/.env，让 backend 启动时能正确解析。
+# 仅在当前 .env 值为空 / 裸 "ffmpeg"|"ffprobe"（PATH 查找）时覆盖，避免破坏用户自定义路径。
+sync_ffmpeg_env() {
+  local env_file="$PROJECT_ROOT/backend/.env"
+  [ -f "$env_file" ] || return 0
+  local local_ffmpeg="$PROJECT_ROOT/tools/ffmpeg/ffmpeg-8.1-essentials_build/bin/ffmpeg.exe"
+  local local_ffprobe="$PROJECT_ROOT/tools/ffmpeg/ffmpeg-8.1-essentials_build/bin/ffprobe.exe"
+
+  local target_ffmpeg="" target_ffprobe=""
+  if [ -f "$local_ffmpeg" ] && [ -f "$local_ffprobe" ]; then
+    target_ffmpeg="./tools/ffmpeg/ffmpeg-8.1-essentials_build/bin/ffmpeg.exe"
+    target_ffprobe="./tools/ffmpeg/ffmpeg-8.1-essentials_build/bin/ffprobe.exe"
+  else
+    return 0  # 没有本地安装 — 不动 .env（用户可能依赖系统 PATH）
+  fi
+
+  local cur_ffmpeg cur_ffprobe
+  cur_ffmpeg=$(grep -E '^[[:space:]]*FFMPEG_BIN=' "$env_file" 2>/dev/null \
+    | head -1 | sed -E 's/^[[:space:]]*FFMPEG_BIN=//' || true)
+  cur_ffprobe=$(grep -E '^[[:space:]]*FFPROBE_BIN=' "$env_file" 2>/dev/null \
+    | head -1 | sed -E 's/^[[:space:]]*FFPROBE_BIN=//' || true)
+
+  local changed=0
+  case "$cur_ffmpeg" in
+    ""|"ffmpeg"|"ffmpeg.exe")
+      set_env_var "$env_file" "FFMPEG_BIN" "$target_ffmpeg" && changed=1 ;;
+  esac
+  case "$cur_ffprobe" in
+    ""|"ffprobe"|"ffprobe.exe")
+      set_env_var "$env_file" "FFPROBE_BIN" "$target_ffprobe" && changed=1 ;;
+  esac
+
+  if [ "$changed" -eq 1 ]; then
+    log_warn "backend/.env — FFMPEG_BIN / FFPROBE_BIN 已指向 tools/ffmpeg 本地安装"
+    export FFMPEG_BIN="$target_ffmpeg"
+    export FFPROBE_BIN="$target_ffprobe"
+  fi
+}
+sync_ffmpeg_env
+
 check_ffbin "FFmpeg " "$FFMPEG_BIN"
 check_ffbin "FFprobe" "$FFPROBE_BIN"
 
