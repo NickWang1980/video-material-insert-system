@@ -13,7 +13,7 @@
           {{ collapsed ? "»" : "«" }}
         </el-button>
       </div>
-      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">V2.3</div>
+      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">v2.4</div>
     </div>
 
     <nav class="p-3 space-y-1">
