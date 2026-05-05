@@ -519,7 +519,7 @@
         </div>
 
         <div class="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.95fr)]">
-          <div class="rcu-player-shell rounded-2xl border border-gray-200 bg-black p-3 text-white">
+          <div class="rcu-player-shell self-start rounded-2xl border border-gray-200 bg-black p-3 text-white">
             <div class="mb-3 flex items-center justify-between text-sm">
               <div class="flex items-center gap-3">
                 <span>预览播放器</span>
