@@ -60,9 +60,39 @@ def list_available_hw_encoders(ffmpeg_bin: str) -> frozenset[str]:
     return frozenset(found)
 
 
+@lru_cache(maxsize=1)
+def list_working_hw_encoders(ffmpeg_bin: str) -> frozenset[str]:
+    """Runtime-test each compiled-in hardware encoder.
+
+    `list_available_hw_encoders` only tells us the encoder is compiled in;
+    a build with NVENC support still fails on a machine that lacks the
+    NVIDIA driver (e.g. ``Cannot load nvcuda.dll``). This probe actually
+    encodes one frame from lavfi to ``-f null`` and treats a non-zero exit
+    code as "not usable". Cached per process.
+    """
+    compiled = list_available_hw_encoders(ffmpeg_bin)
+    working: set[str] = set()
+    for short in compiled:
+        codec = f"h264_{short}"
+        try:
+            r = subprocess.run(
+                [
+                    ffmpeg_bin, "-hide_banner", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.04",
+                    "-frames:v", "1", "-c:v", codec, "-f", "null", "-",
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                working.add(short)
+        except Exception:
+            continue
+    return frozenset(working)
+
+
 def _pick_codec(mode: str, ffmpeg_bin: str) -> str:
     mode = (mode or "auto").lower()
-    avail = list_available_hw_encoders(ffmpeg_bin)
+    avail = list_working_hw_encoders(ffmpeg_bin)
     if mode == "auto":
         for c in ENCODER_AUTO_ORDER:
             if c in avail:
