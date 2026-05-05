@@ -1167,7 +1167,13 @@ def _raise_if_rough_cut_stop_requested(project_id: int) -> None:
         raise RoughCutStopRequested("已停止当前生成任务。")
 
 
-def _run_ffmpeg_command(cmd: list[str], error_prefix: str, *, project_id: int | None = None) -> None:
+def _run_ffmpeg_command(
+    cmd: list[str],
+    error_prefix: str,
+    *,
+    project_id: int | None = None,
+    log_path: Path | None = None,
+) -> None:
     if project_id is not None:
         _raise_if_rough_cut_stop_requested(project_id)
 
@@ -1207,12 +1213,36 @@ def _run_ffmpeg_command(cmd: list[str], error_prefix: str, *, project_id: int | 
             if project_id is not None:
                 _unregister_rough_cut_process(project_id)
 
+    if log_path is not None:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n===== {ts} UTC | exit={returncode} =====\n")
+                f.write("$ " + " ".join(cmd) + "\n")
+                if stdout:
+                    f.write(stdout)
+                    if not stdout.endswith("\n"):
+                        f.write("\n")
+                if stderr:
+                    f.write(stderr)
+                    if not stderr.endswith("\n"):
+                        f.write("\n")
+        except Exception:
+            pass
+
     if project_id is not None and _is_rough_cut_stop_requested(project_id):
         raise RoughCutStopRequested("已停止当前生成任务。")
 
     if returncode != 0:
         err = (stderr or "").strip() or (stdout or "").strip() or str(returncode)
         raise RuntimeError(f"{_repair_text_if_needed(error_prefix)}: {err}")
+
+
+def _rough_cut_ffmpeg_log_path(settings: Settings, project_id: int) -> Path:
+    """Per-project FFmpeg log file under data/outputs/logs/, picked up by the
+    log viewer's "任务（FFmpeg）" category (it globs ``task_*.txt``)."""
+    return settings.data_dir / "outputs" / "logs" / f"task_rc{project_id}.txt"
 
 
 def _probe_has_audio(settings: Settings, file_path: str) -> bool:
@@ -1245,6 +1275,17 @@ def _render_timeline(
         raise ValueError("当前时间线为空，无法导出。")
 
     encoder_mode = _read_video_encoder_mode()
+
+    ffmpeg_log_path = _rough_cut_ffmpeg_log_path(settings, project.id)
+    try:
+        ffmpeg_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with ffmpeg_log_path.open("w", encoding="utf-8") as f:
+            f.write(
+                f"# rough cut project {project.id} render started at "
+                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC | mode={mode}\n"
+            )
+    except Exception:
+        pass
 
     # 捕获本次导出使用的执行参数，写入 project 供 UI 展示
     db = SessionLocal()
@@ -1378,7 +1419,12 @@ def _render_timeline(
                     output_clip.as_posix(),
                 ]
 
-        _run_ffmpeg_command(cmd, f"片段渲染失败（#{idx}）", project_id=project.id)
+        _run_ffmpeg_command(
+            cmd,
+            f"片段渲染失败（#{idx}）",
+            project_id=project.id,
+            log_path=ffmpeg_log_path,
+        )
 
     concat_file = temp_root / "concat.txt"
     concat_file.write_text(
@@ -1411,7 +1457,12 @@ def _render_timeline(
     else:
         concat_cmd += ["-c:a", "aac", "-b:a", "128k"]
     concat_cmd.append(output_path.as_posix())
-    _run_ffmpeg_command(concat_cmd, "时间线拼接失败", project_id=project.id)
+    _run_ffmpeg_command(
+        concat_cmd,
+        "时间线拼接失败",
+        project_id=project.id,
+        log_path=ffmpeg_log_path,
+    )
 
     if subtitle_mode in {"srt", "burn"}:
         srt_root = outputs_root / "subtitles"
@@ -1434,7 +1485,12 @@ def _render_timeline(
                 "copy",
                 burned_path.as_posix(),
             ]
-            _run_ffmpeg_command(burn_cmd, "字幕烧录失败", project_id=project.id)
+            _run_ffmpeg_command(
+                burn_cmd,
+                "字幕烧录失败",
+                project_id=project.id,
+                log_path=ffmpeg_log_path,
+            )
             output_path = burned_path
 
     return output_path.as_posix()
@@ -2527,7 +2583,12 @@ def render_sentence_preview(settings: Settings, project: RoughCutProject, senten
             out_file.as_posix(),
         ]
 
-    _run_ffmpeg_command(cmd, "单句预览渲染失败")
+    _run_ffmpeg_command(
+        cmd,
+        "单句预览渲染失败",
+        project_id=project.id,
+        log_path=_rough_cut_ffmpeg_log_path(settings, project.id),
+    )
     return str(out_file)
 
 
