@@ -1,0 +1,108 @@
+{
+  "page": {
+    "title": "TTS Studio",
+    "subtitle": "Text-to-speech with voice cloning and preset voices",
+    "switchLang": "中"
+  },
+  "modelStatus": {
+    "title": "Model Status",
+    "phase": {
+      "idle": "Idle",
+      "loading": "Loading",
+      "ready": "Ready",
+      "error": "Error"
+    },
+    "loadBase": "Load Base",
+    "loadCustom": "Load CustomVoice",
+    "unloadAll": "Unload All",
+    "loadedModels": "Loaded",
+    "noneLoaded": "No model loaded",
+    "elapsed": "{seconds}s elapsed",
+    "customDisabled": "CustomVoice is disabled (settings.tts_custom_voice_enabled)",
+    "loadTriggered": "Loading triggered in background",
+    "unloadDone": "All models unloaded",
+    "modelSizeBase": "~1.7 GB download / ~3.4 GB VRAM",
+    "modelSizeCustom": "~1.7 GB download / ~3.4 GB VRAM",
+    "memoryNote": "Each model needs ~1.7 GB download on first use; runtime uses ~3.4 GB GPU fp16 (or ~6.8 GB CPU fp32); auto-unloaded after 15 min idle"
+  },
+  "input": {
+    "textLabel": "Text",
+    "textPlaceholder": "Type the text you want to synthesize…",
+    "textCount": "{count}/{max}",
+    "language": "Language",
+    "emotion": "Emotion",
+    "instruct": "Custom instruct (optional, overrides emotion)",
+    "instructPlaceholder": "e.g. speak in a very excited tone",
+    "speed": "Speed",
+    "synthesize": "Synthesize",
+    "synthesizing": "Synthesizing…"
+  },
+  "mode": {
+    "tabClone": "Voice Clone",
+    "tabPreset": "Preset Voice",
+    "cloneHint": "Upload reference audio (≥3s); TTS will mimic the voice (omit to use 440Hz fallback)",
+    "presetHint": "Pick a built-in speaker (only when CustomVoice is enabled)"
+  },
+  "reference": {
+    "uploadHint": "Drop audio file here, or click to upload (wav/mp3 recommended, ≥3s)",
+    "uploaded": "Uploaded: {name}",
+    "noFile": "No reference; using 440Hz synthetic fallback",
+    "uploadSuccess": "Reference uploaded",
+    "uploadFailed": "Reference upload failed"
+  },
+  "preset": {
+    "select": "Pick a voice",
+    "noVoices": "No voices available (check that CustomVoice is loaded)",
+    "selected": "Current: {name}"
+  },
+  "result": {
+    "title": "Result",
+    "duration": "{seconds}s duration",
+    "play": "Play",
+    "download": "Download",
+    "saveAsMaterial": "Save to material",
+    "empty": "No result yet"
+  },
+  "history": {
+    "title": "History",
+    "empty": "No history",
+    "reuse": "Reuse params",
+    "delete": "Delete",
+    "clear": "Clear all",
+    "confirmClear": "Clear all history?",
+    "playedAt": "at {time}"
+  },
+  "batch": {
+    "title": "Batch synthesis",
+    "uploadHint": "Upload a .txt file (one sentence per line)",
+    "lineCount": "{count} lines",
+    "start": "Start",
+    "stop": "Stop",
+    "downloadZip": "Download all (zip)",
+    "lineStatus": {
+      "pending": "Pending",
+      "processing": "Processing",
+      "done": "Done",
+      "error": "Failed"
+    },
+    "progress": "Progress {done}/{total}"
+  },
+  "saveToMaterial": {
+    "title": "Save to material library",
+    "selectProduct": "Select product",
+    "selectScript": "Select script folder",
+    "newFileName": "Filename (optional)",
+    "submit": "Save",
+    "success": "Saved to material library",
+    "failed": "Save failed: {msg}",
+    "noFolder": "Please select a target script folder first"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "loading": "Loading…",
+    "error": "Error: {msg}",
+    "retry": "Retry",
+    "close": "Close"
+  }
+}

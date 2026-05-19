@@ -34,41 +34,83 @@
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold">工作流程</h2>
-        <div class="text-sm text-gray-500">混剪入口或素材插入流水线，按需选择</div>
+        <div class="text-sm text-gray-500">视频生产 → 混剪 → 素材插入，蛇形流水线</div>
       </div>
-      <div class="flex flex-wrap items-stretch gap-3">
+
+      <!-- 第一行：1 → 2 → 3 → 4 -->
+      <div class="flow-row">
         <div class="flow-step">
-          <div class="flow-title">① 混剪</div>
+          <div class="flow-title">① 文案生成</div>
+          <div class="flow-desc">关键词 → 短视频文案 / 分镜</div>
+          <el-button size="small" type="primary" @click="$router.push('/copy-gen')">去文案生成</el-button>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-title">② 语音生成</div>
+          <div class="flow-desc">Qwen3-TTS 文案配音</div>
+          <el-button size="small" type="primary" @click="$router.push('/tts')">去 TTS 工作台</el-button>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-title">③ 视频生成</div>
+          <div class="flow-desc">文案 + 语音 + 素材 → 成品</div>
+          <el-button size="small" type="primary" @click="$router.push('/video-gen')">去视频生成</el-button>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-title">④ 混剪</div>
           <div class="flow-desc">多角色剪辑独立入口</div>
           <el-button size="small" type="primary" @click="$router.push('/rough-cut/unit')">去混剪单元</el-button>
         </div>
-        <div class="flow-arrow">→</div>
+      </div>
+
+      <!-- 转向：右下 -->
+      <div class="flow-row flow-connector">
+        <div class="flow-spacer" />
+        <div class="flow-spacer" />
+        <div class="flow-spacer" />
+        <div class="flow-down">↓</div>
+      </div>
+
+      <!-- 第二行：8 ← 7 ← 6 ← 5（DOM 即视觉顺序）-->
+      <div class="flow-row">
         <div class="flow-step">
-          <div class="flow-title">② 上传素材</div>
-          <div class="flow-desc">图片/GIF/短视频/音效</div>
-          <el-button size="small" @click="$router.push('/materials')">去素材库</el-button>
-        </div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-step">
-          <div class="flow-title">③ 创建模板</div>
-          <div class="flow-desc">配置关键词、素材、提示音</div>
-          <el-button size="small" @click="$router.push('/configs')">去模板管理</el-button>
-        </div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-step">
-          <div class="flow-title">④ 创建源视频条目</div>
-          <div class="flow-desc">绑定原视频 + SRT 字幕</div>
-          <el-button size="small" @click="$router.push('/source-videos')">去源视频库</el-button>
-        </div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-step">
-          <div class="flow-title">⑤ 新建任务</div>
-          <div class="flow-desc">选择源视频条目 + 多模板</div>
+          <div class="flow-title">⑧ 新建任务</div>
+          <div class="flow-desc">源视频 + 多模板</div>
           <el-button size="small" type="primary" @click="createOpen = true">立即创建</el-button>
         </div>
-        <div class="flow-arrow">→</div>
+        <div class="flow-arrow">←</div>
         <div class="flow-step">
-          <div class="flow-title">⑥ 下载产物</div>
+          <div class="flow-title">⑦ 创建源视频条目</div>
+          <div class="flow-desc">原视频 + SRT 字幕</div>
+          <el-button size="small" @click="$router.push('/source-videos')">去源视频库</el-button>
+        </div>
+        <div class="flow-arrow">←</div>
+        <div class="flow-step">
+          <div class="flow-title">⑥ 创建模板</div>
+          <div class="flow-desc">关键词 / 素材 / 提示音</div>
+          <el-button size="small" @click="$router.push('/configs')">去模板管理</el-button>
+        </div>
+        <div class="flow-arrow">←</div>
+        <div class="flow-step">
+          <div class="flow-title">⑤ 上传素材</div>
+          <div class="flow-desc">图片 / GIF / 短视频 / 音效</div>
+          <el-button size="small" @click="$router.push('/materials')">去素材库</el-button>
+        </div>
+      </div>
+
+      <!-- 转向：左下 -->
+      <div class="flow-row flow-connector">
+        <div class="flow-down">↓</div>
+        <div class="flow-spacer" />
+        <div class="flow-spacer" />
+        <div class="flow-spacer" />
+      </div>
+
+      <!-- 第三行：9 -->
+      <div class="flow-row">
+        <div class="flow-step">
+          <div class="flow-title">⑨ 下载产物</div>
           <div class="flow-desc">成品视频 / 报告 / 日志</div>
           <el-button size="small" @click="$router.push('/tasks')">去任务管理</el-button>
         </div>
@@ -279,9 +321,18 @@ async function onSubmit(payload) {
 </script>
 
 <style scoped>
+.flow-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.flow-row + .flow-row {
+  margin-top: 12px;
+}
+
 .flow-step {
-  flex: 1 1 180px;
-  min-width: 180px;
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
@@ -290,6 +341,7 @@ async function onSubmit(payload) {
   flex-direction: column;
   gap: 10px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .flow-title {
@@ -310,8 +362,31 @@ async function onSubmit(payload) {
   line-height: 1;
 }
 
+.flow-connector {
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  align-items: center;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.flow-down {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.flow-spacer {
+  /* 占位用，保持 grid 列对齐 */
+}
+
 @media (max-width: 1024px) {
-  .flow-arrow {
+  .flow-row {
+    grid-template-columns: 1fr;
+  }
+  .flow-arrow,
+  .flow-connector {
     display: none;
   }
 }
@@ -327,7 +402,8 @@ html.dark .flow-desc {
   color: #9ca3af;
 }
 
-html.dark .flow-arrow {
+html.dark .flow-arrow,
+html.dark .flow-down {
   color: #6b7280;
 }
 
@@ -343,7 +419,8 @@ html.glass .flow-desc {
   color: rgba(255, 255, 255, 0.58) !important;
 }
 
-html.glass .flow-arrow {
+html.glass .flow-arrow,
+html.glass .flow-down {
   color: rgba(255, 255, 255, 0.35) !important;
 }
 </style>

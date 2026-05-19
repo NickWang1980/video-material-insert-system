@@ -2161,7 +2161,7 @@ def _make_asset_job_key(project_id: int, asset_id: str) -> str:
 def _get_system_asr_model(db: Session) -> str:
     row = db.query(SettingsRow).filter(SettingsRow.id == 1).first()
     model = str(getattr(row, "asr_model", "small") or "small").strip().lower()
-    return model if model in {"small", "medium"} else "small"
+    return model if model in {"small", "medium", "large-v3", "large-v3-turbo"} else "small"
 
 
 def _update_project_asset(

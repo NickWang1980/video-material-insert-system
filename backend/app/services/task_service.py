@@ -354,7 +354,7 @@ def ensure_settings_row(db: Session) -> SettingsRow:
         db.add(row)
         db.commit()
         db.refresh(row)
-    elif not row.asr_model or row.asr_model not in {"small", "medium"}:
+    elif not row.asr_model or row.asr_model not in {"small", "medium", "large-v3", "large-v3-turbo"}:
         row.asr_model = "small"
         db.commit()
         db.refresh(row)

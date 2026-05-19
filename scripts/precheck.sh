@@ -293,6 +293,343 @@ else
   log_fail "Node.js/npm — 未找到，请安装 Node.js 18+"
 fi
 
+# ── 2.5 CUDA Toolkit 检查（ASR CUDA 加速依赖）────────────────────────────────
+check_cuda_compatibility() {
+  if [ "$OS" != "Windows_NT" ]; then
+    return 0
+  fi
+  local gpu_name
+  gpu_name=$(powershell -Command "Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name" 2>/dev/null | head -1 || true)
+  if [ -z "$gpu_name" ]; then
+    log_warn "无法检测 GPU 型号"
+    return 0
+  fi
+  local compute_capability="unknown"
+  case "$gpu_name" in
+    *"RTX 50"*) compute_capability="9.0" ;;
+    *"RTX 40"*) compute_capability="8.9" ;;
+    *"RTX 30"*) compute_capability="8.6" ;;
+    *"RTX 20"*) compute_capability="7.5" ;;
+    *"GTX 16"*) compute_capability="7.5" ;;
+    *"GTX 10"*) compute_capability="6.1" ;;
+  esac
+
+  log_info "检测到 GPU: ${gpu_name} (Compute Capability: ${compute_capability})"
+
+  if [ "$compute_capability" = "unknown" ]; then
+    log_warn "无法确定 GPU 计算能力"
+    return 0
+  fi
+
+  local cuda_ver
+  if command -v nvcc >/dev/null 2>&1; then
+    cuda_ver=$(nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+  elif [ -n "${CUDA_PATH:-}" ] && [ -f "${CUDA_PATH}/bin/nvcc.exe" ]; then
+    cuda_ver=$("${CUDA_PATH}/bin/nvcc.exe" --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+  fi
+
+  if [ -z "$cuda_ver" ]; then
+    log_warn "无法检测 CUDA 版本"
+    return 0
+  fi
+
+  local cuda_major
+  cuda_major=$(echo "$cuda_ver" | cut -d. -f1)
+
+  case "$compute_capability" in
+    9.0)
+      if [ "$cuda_major" -lt 13 ]; then
+        log_fail "CUDA ${cuda_ver} 不支持 Compute Capability 9.0 (RTX 50 系列)"
+        log_info "需要 CUDA 13.x 以上版本"
+        return 1
+      fi
+      ;;
+    8.9)
+      if [ "$cuda_major" -lt 12 ]; then
+        log_fail "CUDA ${cuda_ver} 不支持 Compute Capability 8.9 (RTX 40 系列)"
+        log_info "需要 CUDA 12.x 以上版本"
+        return 1
+      fi
+      ;;
+    8.6|7.5|6.1)
+      if [ "$cuda_major" -gt 12 ]; then
+        log_warn "CUDA ${cuda_ver} 可能不完全支持 Compute Capability ${compute_capability}"
+      fi
+      ;;
+  esac
+
+  log_ok "CUDA ${cuda_ver} 与 GPU 兼容"
+  return 0
+}
+
+check_cuda_toolkit() {
+  if [ "$OS" != "Windows_NT" ]; then
+    return 0
+  fi
+  if command -v nvcc >/dev/null 2>&1; then
+    local cuda_ver
+    cuda_ver=$(nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | head -1 || true)
+    log_ok "CUDA Toolkit ${cuda_ver} — 已安装（nvcc）"
+    return 0
+  fi
+  if [ -n "${CUDA_PATH:-}" ] && [ -d "$CUDA_PATH" ]; then
+    log_ok "CUDA Toolkit — 已安装（CUDA_PATH=${CUDA_PATH}）"
+    return 0
+  fi
+  local default_cuda_path="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA"
+  if [ -d "$default_cuda_path" ]; then
+    local latest_cuda
+    latest_cuda=$(ls -td "$default_cuda_path"/v* 2>/dev/null | head -1 || true)
+    if [ -n "$latest_cuda" ] && [ -f "${latest_cuda}/bin/nvcc.exe" ]; then
+      log_ok "CUDA Toolkit — 已安装（${latest_cuda}）"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+check_cuda_dlls() {
+  if [ "$OS" != "Windows_NT" ]; then
+    return 0
+  fi
+  # 用 Python 的 ctypes + glob 通配匹配 CUDA 12.x 运行时 DLL（兼容 cudart64_12.dll / cudart64_120.dll /
+  # cudart64_125.dll 等不同副号），任一加载成功即视为可用；并附带打印
+  #   ctranslate2.get_cuda_device_count() 与 torch.cuda.is_available()
+  # 以便定位"装了 NVIDIA 驱动但未装 CUDA Toolkit / cuDNN"的 ASR float16 启动期假阳性。
+  if [ -z "${PY_CMD:-}" ]; then
+    return 1
+  fi
+  local extra_dirs=""
+  if [ -n "${CUDA_PATH:-}" ]; then
+    extra_dirs="${CUDA_PATH}/bin;${CUDA_PATH}/bin/x64"
+  fi
+  local output exit_code
+  output=$(EXTRA_CUDA_DIRS="$extra_dirs" "$PY_CMD" - <<'PYEOF' 2>&1
+import ctypes
+import glob
+import os
+import sys
+
+def _posix_to_win(p):
+    # 把 Git Bash 的 /c/Windows/System32 形式转回 C:\Windows\System32
+    # 仅当形如 /<letter>/... 时才转换，避免误伤合法 Windows 路径
+    if p and len(p) > 2 and p[0] == "/" and p[2] == "/" and p[1].isalpha():
+        return p[1].upper() + ":" + p[2:].replace("/", "\\")
+    return p
+
+def search_dirs():
+    dirs = []
+    raw_path = os.environ.get("PATH", "")
+    # 兼容 Git Bash 的 POSIX PATH（: 分隔）与 cmd/PowerShell 的 Windows PATH（; 分隔）。
+    # Git Bash 下 sys.platform == "win32" 时 os.pathsep == ";"，
+    # 但 os.environ["PATH"] 仍是 :-分隔的 POSIX 串，直接 split(os.pathsep) 会得到一整条不分。
+    if raw_path:
+        chosen_sep = None
+        for sep in (os.pathsep, ";", ":"):
+            if sep and sep in raw_path:
+                chosen_sep = sep
+                break
+        if chosen_sep is None:
+            dirs.append(raw_path)
+        else:
+            dirs.extend(raw_path.split(chosen_sep))
+    extra = os.environ.get("EXTRA_CUDA_DIRS", "")
+    if extra:
+        for d in extra.split(";"):
+            d = d.strip()
+            if d:
+                dirs.append(d)
+    seen, out = set(), []
+    for d in dirs:
+        if not d:
+            continue
+        d = _posix_to_win(d.strip())
+        try:
+            key = os.path.normcase(os.path.normpath(d))
+        except Exception:
+            key = d
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+def find_dlls(pattern):
+    found = []
+    for d in search_dirs():
+        try:
+            found.extend(glob.glob(os.path.join(d, pattern)))
+        except Exception:
+            pass
+    return found
+
+def try_load_any(pattern):
+    for p in find_dlls(pattern):
+        try:
+            p_norm = os.path.normpath(_posix_to_win(p))
+            try:
+                p_norm = os.path.realpath(p_norm)
+            except Exception:
+                pass
+            ctypes.WinDLL(p_norm)
+            return p_norm
+        except OSError:
+            continue
+    return None
+
+checks = {
+    "cudart":   "cudart64_12*.dll",
+    "cublas":   "cublas64_12*.dll",
+    "cublasLt": "cublasLt64_12*.dll",
+    "cudnn":    "cudnn64_*.dll",
+}
+missing = []
+for name, pat in checks.items():
+    found = try_load_any(pat)
+    if found:
+        print(f"[ok] {name}: {found}")
+    else:
+        print(f"[miss] {name}: pattern {pat} not found / cannot load")
+        missing.append(name)
+
+try:
+    import ctranslate2
+    print(f"[ct2] cuda_device_count={ctranslate2.get_cuda_device_count()}")
+except Exception as e:
+    print(f"[ct2] import/check failed: {e}")
+
+try:
+    import torch
+    print(f"[torch] cuda.is_available()={torch.cuda.is_available()}")
+except Exception as e:
+    print(f"[torch] import/check failed: {e}")
+
+if missing:
+    sys.exit(2)
+sys.exit(0)
+PYEOF
+  )
+  exit_code=$?
+
+  # 把 Python 输出按行回显到 precheck 日志（仅作信息提示，不阻断启动）
+  if [ -n "$output" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && log_info "$line"
+    done <<< "$output"
+  fi
+
+  if [ "$exit_code" -eq 0 ]; then
+    return 0
+  fi
+  # 缺失 → log_warn 提示三种解决方向（不 log_err / 不 abort）
+  log_warn "CUDA 运行时 DLL 检测未通过（cudart / cublas / cublasLt / cudnn 任一通配未加载成功）"
+  log_info "解决方向 1: 后端 ASR 改用 int8 精度走 CPU，绕过 CUDA 运行时依赖"
+  log_info "解决方向 2: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12（仅装 PyPI 运行时轮子）"
+  log_info "解决方向 3: 安装完整 CUDA Toolkit 12.x + 匹配 cuDNN（https://developer.nvidia.com/cuda-downloads）"
+  return 1
+}
+
+install_cuda_toolkit() {
+  log_dl "CUDA Toolkit 未安装 — 正在下载安装程序..."
+  local cuda_url="https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_windows.exe"
+  local cuda_installer="$PROJECT_ROOT/tools/cuda_12.4.0_windows.exe"
+  local cuda_dll_dir="$PROJECT_ROOT/tools/cuda/bin"
+
+  mkdir -p "$PROJECT_ROOT/tools"
+
+  if [ -f "$cuda_installer" ]; then
+    log_info "CUDA 安装程序已存在: ${cuda_installer}"
+  else
+    log_info "下载 CUDA Toolkit 12.4.0 (~3GB)..."
+    log_info "URL: ${cuda_url}"
+    if command -v curl >/dev/null 2>&1; then
+      curl -L --connect-timeout 60 --max-time 3600 -o "$cuda_installer" "$cuda_url" 2>&1 || {
+        log_fail "curl 下载失败"
+        return 1
+      }
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$cuda_installer" "$cuda_url" 2>&1 || {
+        log_fail "wget 下载失败"
+        return 1
+      }
+    else
+      log_fail "无可用下载工具（curl/wget），请手动下载"
+      log_info "下载后保存到: ${cuda_installer}"
+      return 1
+    fi
+  fi
+
+  if [ -s "$cuda_installer" ]; then
+    local file_size
+    file_size=$(powershell -Command "(Get-Item '${cuda_installer//\\/\\\\}').Length / 1MB" 2>/dev/null || echo "unknown")
+    log_info "CUDA 安装程序大小: ${file_size} MB"
+    log_dl "正在启动 CUDA Toolkit 安装程序..."
+    log_info "=========================================="
+    log_info "安装时请务必选择以下组件："
+    log_info "  ✓ CUDA > Runtime Libraries > cuBLAS"
+    log_info "  ✓ CUDA > Runtime Libraries > cuRAND"
+    log_info "  ✓ CUDA > Runtime Libraries > cuDART"
+    log_info "=========================================="
+    log_info "安装完成后重启终端使 CUDA_PATH 生效"
+
+    if [ "$OS" = "Windows_NT" ]; then
+      local cuda_installer_win
+      cuda_installer_win=$(echo "$cuda_installer" | sed 's|/|\\|g')
+      cmd //c start "" "$cuda_installer_win" --silent --override
+    else
+      "$cuda_installer" --silent --override || {
+        log_info "如需手动安装，请运行: $cuda_installer"
+      }
+    fi
+    return 0
+  else
+    log_fail "CUDA 安装程序下载失败"
+    rm -f "$cuda_installer"
+    return 1
+  fi
+}
+
+check_cuda_dll_functional() {
+  if [ "$OS" != "Windows_NT" ]; then
+    return 0
+  fi
+  log_info "测试 CUDA DLL 实际加载..."
+  local test_script
+  test_script="$PROJECT_ROOT/test_cuda_dll.py"
+  local backend_path
+  backend_path=$(echo "$PROJECT_ROOT/backend" | sed 's/\\/\\\\/g')
+  echo "import sys; sys.path.insert(0, r'${backend_path}'); from app.services.asr_service import _check_cuda_dlls; exit(0 if _check_cuda_dlls() else 1)" > "$test_script"
+  local test_result
+  test_result=$(python "$test_script" 2>&1)
+  local test_exit=$?
+  rm -f "$test_script"
+  if [ $test_exit -eq 0 ]; then
+    log_ok "CUDA DLL 功能测试通过"
+    return 0
+  else
+    log_warn "CUDA DLL 功能测试失败: ${test_result}"
+    return 1
+  fi
+}
+
+if check_cuda_toolkit; then
+  check_cuda_compatibility
+  check_cuda_dll_functional
+  log_ok "CUDA Toolkit — 就绪"
+elif check_cuda_dlls; then
+  log_ok "CUDA 运行时库 — 就绪"
+  export PATH="$PROJECT_ROOT/tools/cuda/bin:$PATH"
+else
+  # 不再自动下载/安装 CUDA Toolkit（会触发 ~3GB 下载、易因 URL 重定向产出
+  # 0 字节占位文件，且与 start_all.sh 的非交互流程不匹配）。改为软警告，
+  # 让后端走 CPU int8 兜底；如需 GPU 加速由用户手工安装。
+  log_warn "CUDA Toolkit / 运行时库 — 未找到（已忽略，将走 CPU int8 兜底）"
+  log_info "如需 GPU 加速，任选其一:"
+  log_info "  1) 手动安装 CUDA Toolkit 12.x + 匹配 cuDNN（https://developer.nvidia.com/cuda-downloads）"
+  log_info "  2) pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 （仅 PyPI 运行时轮子）"
+  log_info "  3) Settings → ASR 精度设为 int8（CPU 模式，默认兜底）"
+fi
+
 # ── 3. .venv ──────────────────────────────────────────────────────────────────
 if [ ! -d "$PROJECT_ROOT/.venv" ]; then
   if [ -n "$PY_CMD" ]; then
@@ -312,15 +649,58 @@ fi
 # ── 4. Python 依赖 ────────────────────────────────────────────────────────────
 if activate_venv 2>/dev/null; then
   missing=""
-  for pkg in fastapi uvicorn faster-whisper opencc-python-reimplemented PyJWT bcrypt; do
+  # 注意：qwen_tts 是可选依赖（TTS 功能），不阻塞安装流程；soundfile 是必备的音频处理库
+  # `pip install -r requirements.txt`，避免 dev server / TTS 路由首次调用时 ImportError。
+  for pkg in fastapi uvicorn faster-whisper opencc-python-reimplemented PyJWT bcrypt soundfile; do
     pip show "$pkg" >/dev/null 2>&1 || missing="$missing $pkg"
   done
   if [ -n "$missing" ]; then
     log_dl "Python 依赖缺失 (${missing# }) — 正在安装..."
-    if pip install -r "$PROJECT_ROOT/backend/requirements.txt" -q 2>&1; then
+    log_info "requirements.txt 路径: $PROJECT_ROOT/backend/requirements.txt"
+    
+    # 定义 pip 安装函数，支持重试和镜像源切换
+    _pip_install_with_retry() {
+      local timeout=120
+      local attempt=1
+      local pypi_url="https://pypi.org/simple"
+      local tsinghua_url="https://pypi.tuna.tsinghua.edu.cn/simple"
+      local aliyun_url="https://mirrors.aliyun.com/pypi/simple"
+      
+      # 尝试从默认源安装
+      log_info "尝试第 ${attempt} 次安装（PyPI 默认源）..."
+      log_info "命令: pip install -r backend/requirements.txt --timeout ${timeout} -q"
+      log_info "镜像源: ${pypi_url}"
+      if pip install -r "$PROJECT_ROOT/backend/requirements.txt" --timeout "$timeout" -q 2>&1; then
+        return 0
+      fi
+      
+      # 失败后尝试清华镜像
+      attempt=$((attempt + 1))
+      log_info "尝试第 ${attempt} 次安装（清华镜像）..."
+      log_info "命令: pip install -r backend/requirements.txt --timeout ${timeout} -q -i ${tsinghua_url}"
+      if pip install -r "$PROJECT_ROOT/backend/requirements.txt" --timeout "$timeout" -q \
+        -i "${tsinghua_url}" 2>&1; then
+        return 0
+      fi
+      
+      # 尝试阿里云镜像
+      attempt=$((attempt + 1))
+      log_info "尝试第 ${attempt} 次安装（阿里云镜像）..."
+      log_info "命令: pip install -r backend/requirements.txt --timeout ${timeout} -q -i ${aliyun_url}"
+      if pip install -r "$PROJECT_ROOT/backend/requirements.txt" --timeout "$timeout" -q \
+        -i "${aliyun_url}" 2>&1; then
+        return 0
+      fi
+      
+      return 1
+    }
+    
+    if _pip_install_with_retry; then
       log_warn "Python 依赖 — 已安装"
     else
-      log_fail "Python 依赖 — 安装失败，请手动运行: pip install -r backend/requirements.txt"
+      log_fail "Python 依赖 — 安装失败"
+      log_info "提示（中国大陆）：设置环境变量 export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple 后重试"
+      log_info "提示：或手动运行: pip install -r backend/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple"
     fi
   else
     log_ok "Python 依赖已安装"
@@ -348,7 +728,7 @@ ensure_ffmpeg() {
   local zip_path="$PROJECT_ROOT/tools/ffmpeg/ffmpeg-8.1-essentials_build.zip"
   mkdir -p "$PROJECT_ROOT/tools/ffmpeg"
 
-  log_dl "FFmpeg 未找到 — 从 ${url##*/} 下载（约 100 MB）..."
+  log_dl "FFmpeg 未找到 — 从 ${url} 下载（约 100 MB）..."
   if command -v curl >/dev/null 2>&1; then
     if ! curl -L --fail --progress-bar -o "$zip_path" "$url"; then
       log_fail "FFmpeg — 下载失败（curl）"
@@ -497,9 +877,14 @@ else
 
     # 必备模型 → 自动下载
     log_dl "ASR 模型 ${model} — 未找到，开始下载（small≈500MB，medium≈1.5GB）..."
+    log_info "Hugging Face 仓库: https://huggingface.co/Systran/faster-whisper-${model}"
       if activate_venv 2>/dev/null; then
-        PYTHONUNBUFFERED=1 python - "$model" "$PROJECT_ROOT" <<'PYEOF'
+        # PYTHONIOENCODING=utf-8: 避免 Windows 默认 cp1252 在 tqdm 中文/Unicode
+        # 进度条字符上抛 UnicodeEncodeError
+        PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1 python - "$model" "$PROJECT_ROOT" <<'PYEOF'
 import sys, os, shutil
+from tqdm import tqdm
+
 model = sys.argv[1]
 project_root = sys.argv[2]
 local_dir = os.path.join(project_root, 'data', 'asr_models', f'faster-whisper-{model}')
@@ -512,13 +897,37 @@ ASR_MODEL_REPOS = {
 }
 repo_id = ASR_MODEL_REPOS.get(model, f'Systran/faster-whisper-{model}')
 
+class TqdmProgressCallback(tqdm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs, unit='B', unit_scale=True, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+        self._lock = __import__('threading').Lock()
+
+    def _should_update(self, current, total):
+        return True
+
 def _do_download(repo_id, local_dir):
     from huggingface_hub import snapshot_download
+    from huggingface_hub.utils._progress import QuadraticSpeedupDelayFilter
+
+    progress = TqdmProgressCallback(desc=f'下载 {repo_id}', initial=0, dynamic_ncols=True)
+
+    def _progress_callback(chunk_size, file_size, download_speed, **_):
+        if file_size and file_size > 0:
+            progress.total = file_size
+            progress.update(chunk_size)
+
     try:
-        snapshot_download(repo_id=repo_id, local_dir=local_dir, local_dir_use_symlinks=False)
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=local_dir,
+            local_dir_use_symlinks=False,
+            progress_callback=_progress_callback,
+        )
     except TypeError:
-        # huggingface_hub >= 0.24 已移除该参数，local_dir 模式本身不创建 symlink
-        snapshot_download(repo_id=repo_id, local_dir=local_dir)
+        # huggingface_hub >= 0.24 移除 progress_callback 参数
+        snapshot_download(repo_id=repo_id, local_dir=local_dir, local_dir_use_symlinks=False)
+    finally:
+        progress.close()
 
 print(f'[precheck]      仓库: {repo_id}', flush=True)
 try:
@@ -564,12 +973,14 @@ PYEOF
         if [ $py_exit -eq 0 ]; then
           log_warn "ASR 模型 ${model} — 已下载并就绪"
         else
-          log_fail "ASR 模型 ${model} — 下载失败"
+          # 降级为 warn：模型下载失败不应阻断 start_all（用户可在 Settings UI
+          # 中按需触发下载，或用 HF mirror / 离线复制）。
+          log_warn "ASR 模型 ${model} — 下载失败（不阻断启动，可在 Settings 中重试）"
           log_info "提示（中国大陆）：export HF_ENDPOINT=https://hf-mirror.com 后重试"
           log_info "提示（离线）：从工作机复制 ~/.cache/huggingface/hub/models--Systran--faster-whisper-${model}/"
         fi
       else
-        log_fail "ASR 模型 ${model} — 无法下载（.venv 未就绪）"
+        log_warn "ASR 模型 ${model} — 无法下载（.venv 未就绪，可在 Settings 中重试）"
       fi
   done
 

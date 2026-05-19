@@ -7,13 +7,13 @@
       <div class="flex items-center" :class="collapsed ? 'justify-center' : 'justify-between gap-3'">
         <div class="flex items-center gap-3 min-w-0">
           <img src="/bzy_logo.png" alt="八爪鱼Logo" class="w-8 h-8 rounded-lg object-cover flex-none" />
-          <div v-if="!collapsed" class="text-base font-bold leading-tight truncate text-gray-900 dark:text-gray-100">自动化剪辑工具</div>
+          <div v-if="!collapsed" class="text-base font-bold leading-tight truncate text-gray-900 dark:text-gray-100">视频流水线</div>
         </div>
         <el-button text class="!px-2 dark:!text-gray-300" @click="$emit('toggle')">
           {{ collapsed ? "»" : "«" }}
         </el-button>
       </div>
-      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">v2.4</div>
+      <div v-if="!collapsed" class="text-xs text-gray-500 dark:text-gray-400 mt-2">v3.0</div>
     </div>
 
     <nav class="p-3 space-y-1">
@@ -100,6 +100,14 @@ const GROUP_STATE_KEY = "vmis_sidebar_groups";
 
 const allItems = [
   { to: "/",               label: "控制台",   short: "控", moduleKey: "console" },
+  {
+    key: "video_production", label: "视频生产",
+    children: [
+      { to: "/copy-gen",  label: "文案生成", short: "文", moduleKey: "copy_gen" },
+      { to: "/tts",       label: "语音生成", short: "语", moduleKey: "console" },
+      { to: "/video-gen", label: "视频生成", short: "视", moduleKey: "console" },
+    ],
+  },
   { to: "/rough-cut/unit", label: "混剪单元", short: "混", moduleKey: "rough_cut" },
   {
     key: "material_insert", label: "素材插入",
@@ -108,6 +116,7 @@ const allItems = [
       { to: "/source-videos", label: "原视频",   short: "源", moduleKey: "source_videos" },
       { to: "/configs",       label: "配置模板", short: "模", moduleKey: "configs" },
       { to: "/tasks",         label: "任务管理", short: "任", moduleKey: "tasks" },
+      { to: "/tts",           label: "TTS合成",  short: "音", moduleKey: "materials" },
     ],
   },
   {
@@ -151,9 +160,9 @@ const flatLeaves = computed(() => {
 function _loadGroupState() {
   try {
     const saved = JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || "{}");
-    return { material_insert: true, settings_group: true, ...saved };
+    return { video_production: true, material_insert: true, settings_group: true, ...saved };
   } catch {
-    return { material_insert: true, settings_group: true };
+    return { video_production: true, material_insert: true, settings_group: true };
   }
 }
 

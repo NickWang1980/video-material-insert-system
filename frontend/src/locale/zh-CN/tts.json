@@ -1,0 +1,108 @@
+{
+  "page": {
+    "title": "TTS 语音合成",
+    "subtitle": "把文本转语音 — 支持声音克隆与预设音色",
+    "switchLang": "EN"
+  },
+  "modelStatus": {
+    "title": "模型状态",
+    "phase": {
+      "idle": "未加载",
+      "loading": "加载中",
+      "ready": "就绪",
+      "error": "错误"
+    },
+    "loadBase": "加载 Base",
+    "loadCustom": "加载 CustomVoice",
+    "unloadAll": "卸载所有",
+    "loadedModels": "已加载",
+    "noneLoaded": "未加载任何模型",
+    "elapsed": "已用 {seconds}s",
+    "customDisabled": "CustomVoice 未启用（settings.tts_custom_voice_enabled）",
+    "loadTriggered": "已触发后台加载",
+    "unloadDone": "已卸载所有模型",
+    "modelSizeBase": "~1.7 GB 下载 / ~3.4 GB 显存",
+    "modelSizeCustom": "~1.7 GB 下载 / ~3.4 GB 显存",
+    "memoryNote": "每个模型首次加载需下载 ~1.7 GB；运行时占用 GPU fp16 ~3.4 GB（CPU fp32 ~6.8 GB）；空闲 15 分钟自动卸载"
+  },
+  "input": {
+    "textLabel": "文本",
+    "textPlaceholder": "在此输入要合成的文本…",
+    "textCount": "{count}/{max}",
+    "language": "语言",
+    "emotion": "情感",
+    "instruct": "自定义指令（可选，覆盖情感）",
+    "instructPlaceholder": "例如：speak in a very excited tone",
+    "speed": "语速",
+    "synthesize": "合成",
+    "synthesizing": "合成中…"
+  },
+  "mode": {
+    "tabClone": "声音克隆",
+    "tabPreset": "预设音色",
+    "cloneHint": "上传一段 ≥3 秒的参考音频，TTS 会模仿其音色（不上传则使用 440Hz 合成参考）",
+    "presetHint": "选择一个内置音色（仅当 CustomVoice 已启用）"
+  },
+  "reference": {
+    "uploadHint": "拖放音频文件，或点击上传（建议 wav/mp3，≥3s）",
+    "uploaded": "已上传：{name}",
+    "noFile": "未指定参考音频，将使用 440Hz 合成参考",
+    "uploadSuccess": "参考音频已上传",
+    "uploadFailed": "参考音频上传失败"
+  },
+  "preset": {
+    "select": "选择音色",
+    "noVoices": "暂无可用音色（请检查 CustomVoice 是否已加载）",
+    "selected": "当前：{name}"
+  },
+  "result": {
+    "title": "合成结果",
+    "duration": "时长 {seconds} 秒",
+    "play": "播放",
+    "download": "下载",
+    "saveAsMaterial": "存为素材",
+    "empty": "暂无合成结果"
+  },
+  "history": {
+    "title": "历史记录",
+    "empty": "尚无历史",
+    "reuse": "复用参数",
+    "delete": "删除",
+    "clear": "清空全部",
+    "confirmClear": "确认清空全部历史？",
+    "playedAt": "于 {time}"
+  },
+  "batch": {
+    "title": "批量合成",
+    "uploadHint": "上传 .txt 文件（每行一句话）",
+    "lineCount": "共 {count} 行",
+    "start": "开始批量",
+    "stop": "停止",
+    "downloadZip": "下载全部 (zip)",
+    "lineStatus": {
+      "pending": "等待",
+      "processing": "处理中",
+      "done": "完成",
+      "error": "失败"
+    },
+    "progress": "进度 {done}/{total}"
+  },
+  "saveToMaterial": {
+    "title": "存为素材",
+    "selectProduct": "选择产品",
+    "selectScript": "选择脚本文件夹",
+    "newFileName": "文件名（可选）",
+    "submit": "保存",
+    "success": "已存入素材库",
+    "failed": "存入失败：{msg}",
+    "noFolder": "请先选择目标脚本文件夹"
+  },
+  "common": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "loading": "加载中…",
+    "error": "出错：{msg}",
+    "retry": "重试",
+    "close": "关闭"
+  }
+}

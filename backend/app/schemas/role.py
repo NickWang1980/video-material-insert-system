@@ -13,6 +13,7 @@ ALL_MODULE_KEYS: List[str] = [
     "materials",
     "source_videos",
     "rough_cut",
+    "copy_gen",
     "audit",
     "user_management",
     "settings",
@@ -27,6 +28,7 @@ DEFAULT_USER_MODULE_KEYS: List[str] = [
     "materials",
     "source_videos",
     "rough_cut",
+    "copy_gen",
     "settings",
 ]
 

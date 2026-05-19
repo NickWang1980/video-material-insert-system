@@ -54,7 +54,7 @@ def _ensure_default_roles(conn) -> None:
 def _ensure_default_users(conn) -> None:
     import bcrypt as _bcrypt  # noqa: PLC0415
     defaults = [
-        ("admin", "admin20260!", "admin"),
+        ("admin", "admin123", "admin"),
         ("user", "user123", "user"),
     ]
     for username, password, role in defaults:
@@ -551,6 +551,14 @@ def init_db(settings: Settings) -> None:
     from .source_video_entry import SourceVideoEntry  # noqa: F401
     from .task import Task  # noqa: F401
     from .task_snapshot import TaskConfigSnapshot  # noqa: F401
+    from .copy_gen import (  # noqa: F401
+        CopyGenAgent,
+        CopyGenHistory,
+        CopyGenKnowledge,
+        CopyGenModelConfig,
+        CopyGenRule,
+    )
+    from .video_gen import VideoGenTask  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_schema_compatibility()

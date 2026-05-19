@@ -23,8 +23,14 @@ CATEGORY_ASR = "asr"
 CATEGORY_TASK = "task"
 CATEGORY_APP = "app"
 CATEGORY_ROUGH_CUT = "rough_cut"
+CATEGORY_COPY_GEN = "copy_gen"
+CATEGORY_TTS = "tts"
+CATEGORY_VIDEO_GEN = "video_gen"
 
 _FILE_CATEGORIES = {
+    CATEGORY_COPY_GEN: ("文案生成", "copy_gen_*.log"),
+    CATEGORY_TTS: ("语音生成", "tts_*.log"),
+    CATEGORY_VIDEO_GEN: ("视频生成", "video_gen_*.log"),
     CATEGORY_ASR: ("ASR", "asr_*.log"),
     CATEGORY_TASK: ("任务（FFmpeg）", "task_*.txt"),
     CATEGORY_APP: ("系统", "app_*.log"),

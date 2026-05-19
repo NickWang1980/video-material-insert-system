@@ -17,7 +17,7 @@
     <!-- Liquid glass card -->
     <div class="login-card">
       <div class="flex flex-col items-center mb-8">
-<h1 class="text-2xl font-bold tracking-tight text-white drop-shadow">八爪鱼 智能剪辑工具 v2.4</h1>
+<h1 class="text-2xl font-bold tracking-tight text-white drop-shadow">八爪鱼 智能剪辑工具 v3.0</h1>
         <p class="text-sm mt-1 text-white/60">请登录以继续</p>
       </div>
 
