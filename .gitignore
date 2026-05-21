@@ -6,13 +6,17 @@ __pycache__/
 node_modules/
 dist/
 frontend/dist/
-data/
+/data/
 *.db
 .env
-tools/
+/tools/
 
-# ── Submodule heygem 运行时（双保险；submodule 自带 .gitignore 已覆盖，
-#     这里仅防极端情况：用户把 vendor/heygem 拆成普通目录后误推大文件） ──
+# ── vendor/heygem inline 后例外：heygem 用 .pyc 反编译形式发布核心模块，
+#     这些 .pyc 是源代码（非构建产物），不能被上面 *.pyc 规则吃掉 ──
+!vendor/heygem/**/*.pyc
+
+# ── vendor/heygem 运行时（双保险；vendor/heygem/.gitignore 已覆盖，
+#     这里仅防极端情况：误推大文件 / py39 / 模型权重） ──
 vendor/heygem/py39/
 vendor/heygem/tmp/
 vendor/heygem/result/
