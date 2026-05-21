@@ -1,3 +1,0 @@
-[submodule "vendor/heygem"]
-	path = vendor/heygem
-	url = https://github.com/NickWang1980/heygem-vmis-sidecar.git
