@@ -44,7 +44,15 @@
       "Bash(powershell -NoProfile -Command \"Select-String -Path 'backend/app/services/tts_service.py' -Pattern 'get_or_load_tts' | Select-Object -First 20\")",
       "Bash(powershell -NoProfile -Command \"Get-Content backend/requirements.txt | Select-String 'torch|ctranslate|qwen|faster-whisper|transformers' | head -20\")",
       "Bash(bash scripts/precheck.sh)",
-      "Bash(bash -x scripts/precheck.sh)"
+      "Bash(bash -x scripts/precheck.sh)",
+      "Bash(git submodule *)",
+      "Bash(git config *)",
+      "Bash(git fetch *)",
+      "PowerShell(Get-ChildItem \"D:\\\\workspace\\\\bzybox\\\\v-project\\\\heygem_win_no_docker_50_v2\" -Force | Select-Object Mode, Name, @{N='SizeMB';E={if\\($_.PSIsContainer\\){\"DIR\"}else{[math]::Round\\($_.Length/1MB,1\\)}}})",
+      "PowerShell(taskkill *)",
+      "Bash(git status *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
