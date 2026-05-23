@@ -62,7 +62,8 @@
       "PowerShell($deadline = \\(Get-Date\\).AddSeconds\\(60\\); $backend = $false; $frontend = $false; while \\(\\(Get-Date\\) -lt $deadline -and \\(-not $backend -or -not $frontend\\)\\) { Start-Sleep -Seconds 2; if \\(-not $backend\\) { try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/api/health\" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop; if \\($r.StatusCode -eq 200\\) { $backend = $true; Write-Host \"backend up: $\\($r.StatusCode\\) - $\\($r.Content.Substring\\(0,[Math]::Min\\(120,$r.Content.Length\\)\\)\\)\" } } catch {} }; if \\(-not $frontend\\) { try { $r = Invoke-WebRequest -Uri \"http://localhost:5173/\" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop; if \\($r.StatusCode -eq 200\\) { $frontend = $true; Write-Host \"frontend up: $\\($r.StatusCode\\)\" } } catch {} } }; if \\(-not $backend\\) { Write-Host \"backend FAILED to respond within 60s\" }; if \\(-not $frontend\\) { Write-Host \"frontend FAILED to respond within 60s\" })",
       "Bash(bash -n \"D:/workspace/bzybox/v-project/video-material-insert-system/master/scripts/precheck.sh\")",
       "Bash(bash *)",
-      "Bash(echo \"---returned exit=$?---\")"
+      "Bash(echo \"---returned exit=$?---\")",
+      "Bash(git log *)"
     ]
   }
 }

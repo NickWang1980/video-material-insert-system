@@ -284,15 +284,15 @@ for cmd in python python3; do
 done
 
 if [ -z "$PY_CMD" ]; then
-  log_fail "Python — 未找到，请安装 Python 3.12+"
+  log_fail "Python — 未找到，请安装 Python 3.11+"
 else
   PY_VER=$("$PY_CMD" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
   PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
   PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
-  if [ "${PY_MAJOR:-0}" -ge 3 ] && [ "${PY_MINOR:-0}" -ge 12 ]; then
+  if [ "${PY_MAJOR:-0}" -ge 3 ] && [ "${PY_MINOR:-0}" -ge 11 ]; then
     log_ok "Python ${PY_VER}"
   else
-    log_fail "Python ${PY_VER} — 需要 ≥ 3.12，请从 python.org 安装（非 Microsoft Store 版本）"
+    log_fail "Python ${PY_VER} — 需要 ≥ 3.11，请从 python.org 安装（非 Microsoft Store 版本）"
   fi
 fi
 
