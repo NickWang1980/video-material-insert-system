@@ -1,10 +1,16 @@
+# ── 版本上界说明（重要） ──────────────────────────────────────────────────
+# torch / ctranslate2 / faster-whisper 三者对 CUDA wheel 版本敏感（CTranslate2
+# 4.x 当前只发到 CUDA 12，torch 2.x 不同 minor 版本会切换 CUDA 运行时副号），
+# 升级任何一个时务必三者联动验证。transformers 5 / qwen_tts 0.2 等主版本跳跃
+# 通常意味着 API 不兼容，已固定上界，按需评估后再开放。
+# ────────────────────────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.31.1
 sqlalchemy>=2.0.0,<3
 pydantic>=2.11.0,<3
 python-multipart>=0.0.9
 pysrt==1.1.2
-faster-whisper>=1.1.0
+faster-whisper>=1.1.0,<2.0
 opencc-python-reimplemented>=0.1.7
 openpyxl>=3.1.5
 loguru>=0.7.2
@@ -12,3 +18,20 @@ python-dotenv>=1.0.1
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 pytest>=8.2.0
+# ---- ASR (Whisper) module ----
+# faster-whisper: primary ASR backend (uses CTranslate2, requires CUDA 12)
+# transformers + torch: fallback ASR backend for CUDA 13+ GPUs (RTX 50 series)
+transformers>=4.41.0,<5.0
+# ---- TTS (Qwen3-TTS) module ----
+qwen_tts>=0.1.0,<0.2.0
+torch>=2.0.0,<2.12
+soundfile>=0.12.0
+numpy>=1.24.0
+librosa>=0.10.0          # phase-vocoder time_stretch (preserves pitch); fallback to nearest-neighbor in tts_service if missing
+# modelscope>=1.13.0,<2.0   # optional, 国内镜像源；当前代码未直接 import — 取消注释以启用
+# ---- Copy Gen (文案生成) module ----
+openai>=1.0.0,<2.0       # OpenAI-compatible chat.completions client (OpenAI / Qwen / vLLM 等都用同一 SDK)
+anthropic>=0.40.0,<1.0   # Anthropic Messages API client（当 base_url 含 api.anthropic.com 或 model 以 claude- 开头时自动路由）
+cryptography>=42.0.0     # Fernet 加密 ModelConfig.api_key（密钥来自 COPY_GEN_LLM_KEY 或 data/.copy_gen_key）
+# ---- Video Gen (heygem sidecar HTTP client) ----
+httpx>=0.27.0,<1.0       # 与 heygem REST sidecar (vendor/heygem/api_server.py) 通信；openai SDK 实际已 transitive 引入，这里显式声明便于审计

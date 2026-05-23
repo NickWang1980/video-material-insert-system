@@ -31,6 +31,7 @@ def _ff_filter_path(path: str) -> str:
 
 
 def probe_video(settings: Settings, video_path: str) -> VideoProbe:
+    logger.info("[video_gen] probe_video path={}", video_path)
     cmd = [
         settings.ffprobe_bin,
         "-v",
@@ -48,15 +49,21 @@ def probe_video(settings: Settings, video_path: str) -> VideoProbe:
     streams = data.get("streams") or []
     video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     if not video_stream:
+        logger.error("[video_gen] probe_video: ffprobe 未返回视频流信息 path={}", video_path)
         raise RuntimeError("ffprobe 未返回视频流信息")
     has_audio = any(stream.get("codec_type") == "audio" for stream in streams)
     duration = float(data.get("format", {}).get("duration") or 0.0)
-    return VideoProbe(
+    probe = VideoProbe(
         width=int(video_stream["width"]),
         height=int(video_stream["height"]),
         duration=max(0.0, duration),
         has_audio=has_audio,
     )
+    logger.info(
+        "[video_gen] probe_video ok {}x{} dur={:.2f}s audio={}",
+        probe.width, probe.height, probe.duration, probe.has_audio,
+    )
+    return probe
 
 
 def export_audio_track(
@@ -75,6 +82,10 @@ def export_audio_track(
         raise ValueError("audio_format 仅支持 wav 或 flac")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "[video_gen] export_audio_track src={} dst={} fmt={}",
+        video_path, output_path, fmt,
+    )
     cmd = [
         settings.ffmpeg_bin,
         "-y",
@@ -93,9 +104,10 @@ def export_audio_track(
         capture_output=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"导出 {fmt} 音轨失败: {proc.stderr.strip() or proc.stdout.strip() or proc.returncode}"
-        )
+        err = proc.stderr.strip() or proc.stdout.strip() or str(proc.returncode)
+        logger.error("[video_gen] export_audio_track failed fmt={} err={}", fmt, err)
+        raise RuntimeError(f"导出 {fmt} 音轨失败: {err}")
+    logger.info("[video_gen] export_audio_track ok dst={}", output_path)
 
 
 def strip_video_audio(
@@ -106,6 +118,10 @@ def strip_video_audio(
     video_encoder_mode: str = "auto",
 ) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "[video_gen] strip_video_audio src={} dst={} encoder_mode={}",
+        input_path, output_path, video_encoder_mode,
+    )
     cmd_copy = [
         settings.ffmpeg_bin,
         "-y",
@@ -124,7 +140,12 @@ def strip_video_audio(
         capture_output=True,
     )
     if proc_copy.returncode == 0:
+        logger.info("[video_gen] strip_video_audio ok via stream copy dst={}", output_path)
         return
+    logger.warning(
+        "[video_gen] strip_video_audio stream-copy failed (rc={}), retry with re-encode",
+        proc_copy.returncode,
+    )
 
     cmd_reencode = [
         settings.ffmpeg_bin, "-y", "-i", input_path, "-an",
@@ -148,7 +169,9 @@ def strip_video_audio(
             or proc_copy.stdout.strip()
             or str(proc_reencode.returncode)
         )
+        logger.error("[video_gen] strip_video_audio re-encode failed err={}", message)
         raise RuntimeError(f"视频去音轨失败: {message}")
+    logger.info("[video_gen] strip_video_audio ok via re-encode dst={}", output_path)
 
 
 def grid_xy_expr(position: int) -> tuple[str, str]:
@@ -436,7 +459,7 @@ def run_ffmpeg(
 ) -> None:
     log_file = Path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("Running FFmpeg: {}", " ".join(cmd))
+    logger.info("[video_gen] Running FFmpeg: {}", " ".join(cmd))
     with log_file.open("a", encoding="utf-8") as file_handle:
         file_handle.write("FFmpeg command:\n")
         file_handle.write(" ".join(cmd) + "\n\n")
@@ -493,4 +516,8 @@ def run_ffmpeg(
 
         file_handle.write("\n")
         if process.returncode != 0:
+            logger.error(
+                "[video_gen] FFmpeg exit rc={} log={}", process.returncode, log_path
+            )
             raise RuntimeError(f"FFmpeg 执行失败，返回码 {process.returncode}")
+    logger.info("[video_gen] FFmpeg done rc=0 log={}", log_path)

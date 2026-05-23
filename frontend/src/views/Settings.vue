@@ -51,7 +51,7 @@
       </div>
 
       <div>
-        <div class="text-lg font-bold mb-4">字幕解析与ASR设置</div>
+        <div class="text-lg font-bold mb-4">字幕解析与 ASR 设置（用于：源视频字幕识别 · faster-whisper / Whisper）</div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <div class="text-sm font-medium mb-2">字幕编码</div>
@@ -86,7 +86,7 @@
     <!-- ── FFmpeg 工具管理 ─────────────────────────────────────────── -->
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">
       <div class="flex items-center justify-between mb-4">
-        <div class="text-lg font-bold">FFmpeg 工具管理</div>
+        <div class="text-lg font-bold">FFmpeg 工具管理（用于：视频/音频转码 · 字幕烧录 · 素材插入 · 混剪导出）</div>
         <el-button size="small" @click="loadFfmpeg" :loading="ffmpegLoading">刷新</el-button>
       </div>
       <div v-if="ffmpegInfo" class="space-y-4">
@@ -230,7 +230,7 @@
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">
       <div class="flex items-center justify-between mb-4">
         <div>
-          <div class="text-lg font-bold">ASR 队列</div>
+          <div class="text-lg font-bold">ASR 队列（用于：字幕识别后台任务）</div>
           <div class="text-xs text-gray-500 mt-1">
             待处理 <span class="font-semibold text-gray-700">{{ asrQueue.pending_count }}</span>
             / 运行中 <span class="font-semibold text-gray-700">{{ asrQueue.running_count }}</span>
@@ -294,7 +294,7 @@
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">
       <div class="flex items-center justify-between mb-4">
         <div>
-          <div class="text-lg font-bold">FFmpeg 队列</div>
+          <div class="text-lg font-bold">FFmpeg 队列（用于：素材插入 / 混剪导出 的后台任务）</div>
           <div class="text-xs text-gray-500 mt-1">
             待处理 <span class="font-semibold text-gray-700">{{ ffmpegQueue.pending_count }}</span>
             / 运行中 <span class="font-semibold text-gray-700">{{ ffmpegQueue.running_count }}</span>
@@ -352,7 +352,7 @@
     <!-- ── ASR 模型管理 ─────────────────────────────────────────────── -->
     <div class="p-6 rounded-xl border border-gray-200 shadow-card">
       <div class="flex items-center justify-between mb-4">
-        <div class="text-lg font-bold">ASR 模型管理</div>
+        <div class="text-lg font-bold">ASR 模型管理（用于：字幕识别 / 语音→文字 · faster-whisper）</div>
         <el-button size="small" @click="loadModels" :loading="modelsLoading">刷新</el-button>
       </div>
       <el-table :data="installedModels" stripe v-loading="modelsLoading" style="width: 100%">
@@ -414,6 +414,141 @@
       </div>
     </div>
 
+    <!-- ── TTS 模型管理（Qwen3-TTS） ────────────────────────────────── -->
+    <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-lg font-bold">TTS 模型管理（Qwen3-TTS · 用于：语音生成 / 文字→语音）</div>
+          <div class="text-xs text-gray-500 mt-1">
+            缓存根目录：<code class="font-mono">{{ ttsModelCacheRoot || "—" }}</code>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <el-button size="small" @click="loadTTSModels" :loading="ttsModelsLoading">刷新</el-button>
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :disabled="!ttsModels.some((m) => m.loaded)"
+            :loading="ttsUnloading"
+            @click="onUnloadAllTTS"
+          >卸载所有（释放内存）</el-button>
+        </div>
+      </div>
+
+      <el-table :data="ttsModels" stripe v-loading="ttsModelsLoading" style="width: 100%">
+        <el-table-column label="模型" width="180">
+          <template #default="{ row }">
+            <div class="font-medium">{{ row.label }}</div>
+            <div class="text-xs text-gray-500 font-mono break-all">{{ row.model_id }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="160">
+          <template #default="{ row }">
+            <div class="space-y-1">
+              <el-tag v-if="row.cached" type="success" size="small">已缓存到磁盘</el-tag>
+              <el-tag v-else type="info" size="small">未下载</el-tag>
+              <el-tag v-if="row.loaded" type="warning" size="small">已加载到内存</el-tag>
+              <el-tag v-if="row.key === 'custom' && !row.enabled" type="danger" size="small">未启用</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="说明 / 缓存路径" min-width="320">
+          <template #default="{ row }">
+            <div class="text-xs text-gray-600">{{ row.description }}</div>
+            <div class="text-xs font-mono break-all text-gray-500 mt-1">{{ row.cache_path }}</div>
+            <div class="text-xs text-gray-500 mt-1">
+              磁盘占用：{{ row.cached ? formatSize(row.cache_size_bytes) : "—" }}
+              <span class="text-gray-400 mx-1">|</span>
+              下载约：~{{ row.download_size_mb }} MB
+              <span class="text-gray-400 mx-1">|</span>
+              运行约：~{{ Math.round(row.download_size_mb * 2) }} MB（GPU fp16）
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="280" align="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="!row.cached && !row.loaded"
+              size="small"
+              type="primary"
+              :loading="ttsActing[row.key] === 'download'"
+              :disabled="row.key === 'custom' && !row.enabled"
+              @click="onDownloadTTSModel(row)"
+            >下载并加载</el-button>
+            <el-button
+              v-else-if="row.cached && !row.loaded"
+              size="small"
+              type="primary"
+              :loading="ttsActing[row.key] === 'download'"
+              :disabled="row.key === 'custom' && !row.enabled"
+              @click="onDownloadTTSModel(row)"
+            >加载到内存</el-button>
+            <el-button
+              v-if="row.cached || row.loaded"
+              size="small"
+              type="danger"
+              plain
+              :loading="ttsActing[row.key] === 'delete'"
+              @click="confirmDeleteTTSModel(row)"
+            >删除磁盘缓存</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="text-xs text-gray-500 mt-3 leading-relaxed space-y-1">
+        <div>· "下载并加载"会触发 HuggingFace 下载（~1.7 GB）并把模型加载到内存。下载进度在 TTS 合成页的状态条实时显示。</div>
+        <div>· "删除磁盘缓存"会先卸载内存实例再 rmtree 缓存目录；若目录被 OS 锁定（Windows）请先关闭其它占用进程。</div>
+        <div>· CustomVoice 启用开关由 <code>backend/.env</code> 中的 <code>TTS_CUSTOM_VOICE_ENABLED=1</code> 控制（修改后需重启后端）。</div>
+        <div>· 闲置 <span class="font-mono">tts_idle_unload_minutes</span>（默认 15）分钟后会自动卸载内存中的模型；磁盘缓存保留。</div>
+      </div>
+    </div>
+
+    <!-- ── 视频生成 / heygem 数字人 ────────────────────────────────── -->
+    <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-lg font-bold">视频生成 · heygem 数字人 sidecar（用于：数字人合成 / 唇形对齐 · 输入音频+参考视频→数字人 mp4）</div>
+          <div class="text-xs text-gray-500 mt-1">
+            REST endpoint：<code class="font-mono">{{ videoGenStore.health.base_url || "—" }}</code>
+          </div>
+        </div>
+        <el-button size="small" :loading="videoGenStore.healthLoading" @click="videoGenStore.fetchHealth">
+          重新检测
+        </el-button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="md:col-span-1">
+          <div class="text-sm font-medium mb-2">连接状态</div>
+          <div class="space-y-1">
+            <el-tag v-if="!videoGenStore.health.enabled" type="info" size="small">已通过 .env 禁用</el-tag>
+            <el-tag v-else-if="!videoGenStore.health.reachable" type="danger" size="small">未连接</el-tag>
+            <el-tag v-else-if="videoGenStore.health.heygem_ready === false" type="warning" size="small">初始化中</el-tag>
+            <el-tag v-else type="success" size="small">已就绪</el-tag>
+            <div class="text-xs text-gray-500 mt-1 break-all">{{ videoGenStore.health.detail || "—" }}</div>
+            <div v-if="videoGenStore.health.heygem_gpu" class="text-xs text-gray-500">GPU：{{ videoGenStore.health.heygem_gpu }}</div>
+          </div>
+        </div>
+        <div class="md:col-span-2">
+          <div class="text-sm font-medium mb-2">显存调度策略</div>
+          <el-select v-model="vramStrategyLocal" class="w-full" @change="onVramStrategyChange">
+            <el-option label="手动（默认；自己决定何时启 heygem 与 TTS 不冲突）" value="manual" />
+            <el-option label="TTS 主动 unload（Phase-2 实装；当前仅记录偏好）" value="tts_unload" />
+            <el-option label="CUDA 双卡隔离（Phase-2 实装；需主机两张 N 卡）" value="cuda_isolate" />
+          </el-select>
+          <div class="text-xs text-gray-500 mt-1">
+            连接 endpoint / enabled / 超时由 <code>backend/.env</code> 中的
+            <code>HEYGEM_BASE_URL</code> / <code>HEYGEM_ENABLED</code> /
+            <code>HEYGEM_REQUEST_TIMEOUT</code> 控制（修改后需重启后端）。
+          </div>
+          <div class="text-xs text-gray-500 mt-1">
+            启动 heygem：<code>scripts\start_all.bat --with-heygem</code>
+            或单独 <code>vendor\heygem\start_api.bat</code>（首次运行会自动 pip 安装 fastapi/uvicorn/python-multipart）。
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── 下载进度弹窗 ─────────────────────────────────────────────── -->
     <el-dialog
       v-model="installOpen"
@@ -453,6 +588,16 @@
 import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as settingsApi from "../api/settings";
+import * as ttsApi from "../api/tts";
+import { useVideoGenStore } from "../store/modules/videoGen";
+
+const videoGenStore = useVideoGenStore();
+const vramStrategyLocal = ref(videoGenStore.vramStrategy);
+
+function onVramStrategyChange(v) {
+  videoGenStore.setVramStrategy(v);
+  ElMessage.success(`已切换显存策略为「${v}」（Phase-1 仅记录，Phase-2 生效）`);
+}
 
 const loading = ref(false);
 const saving = ref(false);
@@ -497,6 +642,13 @@ const ffmpegQueue = ref({ items: [], pending_count: 0, running_count: 0, total_c
 const ffmpegQueueLoading = ref(false);
 const ffmpegQueueClearing = ref(false);
 
+// ── TTS 模型管理 ──────────────────────────────────────────────
+const ttsModels = ref([]);
+const ttsModelCacheRoot = ref("");
+const ttsModelsLoading = ref(false);
+const ttsUnloading = ref(false);
+const ttsActing = reactive({});  // { base: 'download' | 'delete', custom: ... }
+
 onMounted(async () => {
   await load();
   await Promise.all([
@@ -505,8 +657,86 @@ onMounted(async () => {
     loadCache(),
     loadAsrQueue(),
     loadFfmpegQueue(),
+    loadTTSModels(),
+    videoGenStore.fetchHealth(),
   ]);
 });
+
+async function loadTTSModels() {
+  ttsModelsLoading.value = true;
+  try {
+    const data = await ttsApi.listTTSModels();
+    ttsModels.value = Array.isArray(data?.models) ? data.models : [];
+    ttsModelCacheRoot.value = data?.cache_root || "";
+  } catch (e) {
+    ElMessage.error(`加载 TTS 模型信息失败：${e?.message || e}`);
+  } finally {
+    ttsModelsLoading.value = false;
+  }
+}
+
+async function onDownloadTTSModel(row) {
+  ttsActing[row.key] = "download";
+  try {
+    if (row.key === "base") {
+      await ttsApi.loadTTSBase();
+    } else {
+      await ttsApi.loadTTSCustom();
+    }
+    ElMessage.success(
+      row.cached
+        ? `已触发后台加载 ${row.label}`
+        : `已开始下载并加载 ${row.label}（约 ${row.download_size_mb} MB），进度可在 TTS 合成页查看`
+    );
+    // 等几秒后刷新（让后端开始 + 状态写入）
+    setTimeout(loadTTSModels, 1500);
+  } catch (e) {
+    ElMessage.error(`触发失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    delete ttsActing[row.key];
+  }
+}
+
+async function confirmDeleteTTSModel(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将删除 ${row.label} 的磁盘缓存（${formatSize(row.cache_size_bytes)}）。\n\n` +
+        `若模型当前已加载到内存，会先卸载再删除。\n下次需要时会重新下载（${row.download_size_mb} MB）。\n\n` +
+        `是否继续？`,
+      "删除 TTS 模型缓存",
+      { confirmButtonText: "删除", cancelButtonText: "取消", type: "warning" }
+    );
+  } catch {
+    return;
+  }
+  ttsActing[row.key] = "delete";
+  try {
+    const res = await ttsApi.deleteTTSModel(row.key);
+    if (res?.deleted) {
+      ElMessage.success(`已删除 ${row.label}（释放 ${formatSize(res.freed_bytes)}）`);
+    } else {
+      ElMessage.warning(res?.message || "未删除任何文件");
+    }
+    await loadTTSModels();
+  } catch (e) {
+    ElMessage.error(`删除失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    delete ttsActing[row.key];
+  }
+}
+
+async function onUnloadAllTTS() {
+  ttsUnloading.value = true;
+  try {
+    await ttsApi.unloadTTS();
+    ElMessage.success("已卸载所有 TTS 模型（磁盘缓存保留）");
+    await loadTTSModels();
+  } catch (e) {
+    ElMessage.error(`卸载失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    ttsUnloading.value = false;
+  }
+}
 
 async function loadAsrQueue() {
   asrQueueLoading.value = true;

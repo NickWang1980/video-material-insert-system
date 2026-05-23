@@ -6,7 +6,48 @@ __pycache__/
 node_modules/
 dist/
 frontend/dist/
-data/
+/data/
 *.db
 .env
-tools/
+/tools/
+
+# ── vendor/heygem inline 后例外：heygem 用 .pyc 反编译形式发布核心模块，
+#     这些 .pyc 是源代码（非构建产物），不能被上面 *.pyc 规则吃掉 ──
+!vendor/heygem/**/*.pyc
+
+# ── vendor/heygem 运行时（双保险；vendor/heygem/.gitignore 已覆盖，
+#     这里仅防极端情况：误推大文件 / py39 / 模型权重） ──
+vendor/heygem/py39/
+vendor/heygem/tmp/
+vendor/heygem/result/
+vendor/heygem/audio/
+vendor/heygem/data/temp/
+vendor/heygem/data/log/
+vendor/heygem/hf_download/
+vendor/heygem/tf_download/
+vendor/heygem/.gradio/
+vendor/heygem/flagged/
+
+# ── AI 模型权重 / 缓存（已被 data/ 覆盖，重复声明以示清晰） ──
+data/asr_models/
+data/qwen3_models/
+data/video_gen/
+data/outputs/tts/
+
+# ── 全局模型权重后缀 ban（防止误提交；若需追踪合法 onnx/bin 用 git add -f） ──
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.gguf
+*.onnx
+*.bin
+
+# ── HuggingFace / ModelScope 下载缓存（若出现在项目根下） ──
+.cache/
+hf_download/
+tf_download/
+
+# ── 运行时日志 / 临时调试脚本 ──
+logs/
+test_cuda_asr*.py

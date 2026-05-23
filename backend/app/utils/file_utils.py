@@ -29,6 +29,10 @@ def ensure_data_layout(settings: Settings) -> None:
     (data_dir / "outputs" / "videos").mkdir(parents=True, exist_ok=True)
     (data_dir / "outputs" / "reports").mkdir(parents=True, exist_ok=True)
     (data_dir / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
+    # Video Gen — 数字人合成结果 + 用户上传的临时源（音频/参考视频）。
+    (data_dir / "video_gen").mkdir(parents=True, exist_ok=True)
+    (data_dir / "uploads" / "video_gen" / "audio").mkdir(parents=True, exist_ok=True)
+    (data_dir / "uploads" / "video_gen" / "video").mkdir(parents=True, exist_ok=True)
 
 
 def migrate_legacy_if_needed(settings: Settings) -> None:

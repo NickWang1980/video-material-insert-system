@@ -17,6 +17,9 @@ from .app.api.settings import router as settings_router
 from .app.api.source_videos import router as source_videos_router
 from .app.api.stats import router as stats_router
 from .app.api.tasks import router as tasks_router
+from .app.api.tts import router as tts_router
+from .app.api.copy_gen import router as copy_gen_router
+from .app.api.video_gen import router as video_gen_router
 from .app.middleware.audit_middleware import AuditMiddleware
 from .app.middleware.auth_middleware import AuthMiddleware
 from .app.config import get_settings
@@ -29,6 +32,8 @@ from .app.utils.file_utils import (
 from .app.utils.logger import configure_logging
 from .app.services.task_service import resume_all_tasks
 from .app.services.asr_service import resume_pending_asr_jobs
+from .app.services.tts_service import start_idle_watchdog as start_tts_watchdog
+from .app.services.video_gen_service import resume_running_tasks as resume_video_gen_tasks
 
 
 def create_app() -> FastAPI:
@@ -58,6 +63,10 @@ def create_app() -> FastAPI:
         resume_all_tasks(settings, include_failed=True)
         # Resume ASR jobs for pending/running/retryable-failed source videos.
         resume_pending_asr_jobs(settings)
+        # Start the TTS idle-unload watchdog (does not load any model).
+        start_tts_watchdog(settings)
+        # Phase-1: mark any in-flight video_gen tasks as `interrupted` after restart.
+        resume_video_gen_tasks(settings)
 
     app.include_router(auth_router)
     app.include_router(audit_router)
@@ -71,6 +80,9 @@ def create_app() -> FastAPI:
     app.include_router(settings_router)
     app.include_router(stats_router)
     app.include_router(logs_router)
+    app.include_router(tts_router)
+    app.include_router(copy_gen_router)
+    app.include_router(video_gen_router)
 
     # Production static hosting: mount frontend/dist if present
     repo_root = Path(__file__).resolve().parents[1]

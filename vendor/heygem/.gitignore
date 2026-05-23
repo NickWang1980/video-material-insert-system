@@ -1,0 +1,58 @@
+# =======================================================
+# heygem 数字人引擎 — 仓库忽略规则
+# 说明：本仓库被作为 master 项目 video-material-insert-system 的 git submodule 引入
+#       （路径 vendor/heygem）。下方规则同步于 master 项目 .gitignore 的双保险。
+# =======================================================
+
+# ---- 便携 Python 运行时 (13 GB) ----------------------------
+py39/
+
+# ---- 运行时输出 / 中间产物 ----------------------------------
+tmp/
+result/
+audio/
+data/temp/
+data/log/
+
+# ---- HuggingFace / Transformers 下载缓存 ---------------------
+hf_download/
+tf_download/
+
+# ---- Python 缓存（注意：顶层 *.pyc 是源，不要 ignore）---------
+__pycache__/
+*.pyo
+
+# ---- Gradio --------------------------------------------------
+.gradio/
+flagged/
+
+# ---- 系统 ----------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- IDE -----------------------------------------------------
+.vscode/
+.idea/
+
+# ---- 示例素材（可选；省 ~12 MB；按需打开） --------------------
+# example/
+
+# ─────────────────────────────────────────────────────────────
+# 模型权重目录（heygem 推理必需，但不进 git，由用户本地补齐）
+# 详见 readme.txt 或 docs/weights_setup.md
+# ─────────────────────────────────────────────────────────────
+pretrain_models/
+landmark2face_wy/checkpoints/
+wenet/examples/aishell/aidata/exp/
+xseg/
+face_detect_utils/resources/
+face_attr_detect/face_attr_epoch_12_220318.onnx
+
+# ---- 防御性后缀 ban（权重类后缀，不影响代码 .pyc/.pyd） ----
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.ckpt
+*.gguf

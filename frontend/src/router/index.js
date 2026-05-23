@@ -13,6 +13,9 @@ import RoughCutUnit from "../views/RoughCutUnit.vue";
 import AuditLog from "../views/AuditLog.vue";
 import UserManagement from "../views/UserManagement.vue";
 import LogsViewer from "../views/LogsViewer.vue";
+import TTSStudio from "../views/TTSStudio.vue";
+import CopyGen from "../views/CopyGen.vue";
+import VideoGen from "../views/VideoGen.vue";
 import Login from "../views/Login.vue";
 
 const routes = [
@@ -30,6 +33,10 @@ const routes = [
   { path: "/audit", name: "audit", component: AuditLog },
   { path: "/admin/users", name: "userManagement", component: UserManagement, meta: { adminOnly: true } },
   { path: "/logs", name: "logs", component: LogsViewer },
+  { path: "/tts", name: "tts", component: TTSStudio },
+  { path: "/copy-gen", name: "copyGen", component: CopyGen },
+  { path: "/voice-gen", redirect: "/tts" },
+  { path: "/video-gen", name: "videoGen", component: VideoGen },
   { path: "/settings", name: "settings", component: Settings },
 ];
 
