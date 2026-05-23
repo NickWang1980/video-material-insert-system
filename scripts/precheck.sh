@@ -278,21 +278,188 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
 fi
 
 # ── 1. Python ─────────────────────────────────────────────────────────────────
-PY_CMD=""
-for cmd in python python3; do
-  command -v "$cmd" >/dev/null 2>&1 && { PY_CMD="$cmd"; break; }
-done
+# 最低 Python 版本要求（主要受 qwen_tts / torch / faster-whisper / cryptography
+# 等多个 C-extension 依赖近期 wheel 仅发到 3.12+ 的影响；3.11.x 在某些镜像上会被
+# 解析到 source dist 然后 build fail）。三步定位：
+#   1) PATH 上的 python / python3
+#   2) Windows `py` launcher（py -3.13 / py -3.12）— 可能已装但不在 PATH
+#   3) 兜底自动从 python.org 下载并静默安装到当前用户（不需要管理员权限）
+PY_MIN_MAJOR=3
+PY_MIN_MINOR=12
+PY_INSTALL_VER="3.12.8"   # 自动安装时使用的 stable 版本
 
-if [ -z "$PY_CMD" ]; then
-  log_fail "Python — 未找到，请安装 Python 3.11+"
-else
-  PY_VER=$("$PY_CMD" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-  PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
-  PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
-  if [ "${PY_MAJOR:-0}" -ge 3 ] && [ "${PY_MINOR:-0}" -ge 11 ]; then
-    log_ok "Python ${PY_VER}"
+_py_version_of() {
+  local cmd="$1"
+  "$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+}
+
+_py_meets_min() {
+  local ver="$1"
+  [ -z "$ver" ] && return 1
+  local major minor
+  major=$(echo "$ver" | cut -d. -f1)
+  minor=$(echo "$ver" | cut -d. -f2)
+  [ "${major:-0}" -gt "$PY_MIN_MAJOR" ] && return 0
+  [ "${major:-0}" -eq "$PY_MIN_MAJOR" ] && [ "${minor:-0}" -ge "$PY_MIN_MINOR" ] && return 0
+  return 1
+}
+
+# 在 PATH / py launcher 上定位一个满足最低版本的 Python，echo "cmd|ver"，找不到返回非零
+_locate_python() {
+  local cmd ver py_exe minor
+  for cmd in python python3; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      ver=$(_py_version_of "$cmd")
+      if _py_meets_min "$ver"; then
+        echo "$cmd|$ver"
+        return 0
+      fi
+    fi
+  done
+  if command -v py >/dev/null 2>&1; then
+    for minor in 13 12; do
+      if py -3."$minor" --version >/dev/null 2>&1; then
+        py_exe=$(py -3."$minor" -c "import sys; print(sys.executable)" 2>/dev/null | tr -d '\r')
+        if [ -n "$py_exe" ] && [ -f "$py_exe" ]; then
+          ver=$(_py_version_of "$py_exe")
+          if _py_meets_min "$ver"; then
+            echo "$py_exe|$ver"
+            return 0
+          fi
+        fi
+      fi
+    done
+  fi
+  return 1
+}
+
+# 静默下载并安装 Python 到当前用户（仅 Windows）。成功时设置 INSTALLED_PY_EXE。
+INSTALLED_PY_EXE=""
+_install_python_silent() {
+  if [ "${OS:-}" != "Windows_NT" ]; then
+    log_fail "非 Windows 环境无法自动安装 Python，请手动安装 Python ${PY_MIN_MAJOR}.${PY_MIN_MINOR}+"
+    return 1
+  fi
+  local url="https://www.python.org/ftp/python/${PY_INSTALL_VER}/python-${PY_INSTALL_VER}-amd64.exe"
+  local installer="$PROJECT_ROOT/tools/python-${PY_INSTALL_VER}-amd64.exe"
+  mkdir -p "$PROJECT_ROOT/tools"
+
+  if [ ! -s "$installer" ]; then
+    log_dl "下载 Python ${PY_INSTALL_VER} 安装包（~30 MB）..."
+    log_info "URL: ${url}"
+    if command -v curl >/dev/null 2>&1; then
+      if ! curl -L --fail --progress-bar --connect-timeout 60 --max-time 600 -o "$installer" "$url"; then
+        log_fail "Python 安装包下载失败（curl）"
+        rm -f "$installer"
+        return 1
+      fi
+    elif command -v powershell >/dev/null 2>&1; then
+      local inst_win
+      inst_win=$(cygpath -w "$installer" 2>/dev/null || echo "$installer")
+      if ! powershell -NonInteractive -Command "\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${url}' -OutFile '${inst_win}'"; then
+        log_fail "Python 安装包下载失败（powershell）"
+        rm -f "$installer"
+        return 1
+      fi
+    else
+      log_fail "Python 安装包下载失败：无 curl / powershell"
+      return 1
+    fi
   else
-    log_fail "Python ${PY_VER} — 需要 ≥ 3.11，请从 python.org 安装（非 Microsoft Store 版本）"
+    log_info "复用已下载的安装包：${installer}"
+  fi
+
+  log_dl "正在静默安装 Python ${PY_INSTALL_VER}（用户级，无需管理员权限）..."
+  log_info "选项：InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0 Include_doc=0"
+  log_info "安装位置：%LOCALAPPDATA%\\Programs\\Python\\Python$(echo "$PY_INSTALL_VER" | cut -d. -f1-2 | tr -d .)"
+
+  local installer_win
+  if command -v cygpath >/dev/null 2>&1; then
+    installer_win=$(cygpath -w "$installer")
+  else
+    installer_win=$(echo "$installer" | sed 's|/|\\|g')
+  fi
+
+  # /passive: 显示进度但不需用户交互。/quiet 完全无 UI（在 headless 环境用），
+  # 这里选 /passive 让用户看到下载/安装进度。
+  local quiet_flag="/passive"
+  [ -t 1 ] || quiet_flag="/quiet"
+  if command -v cmd >/dev/null 2>&1; then
+    if ! cmd //c "\"${installer_win}\" ${quiet_flag} InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0 Include_doc=0"; then
+      log_fail "Python 安装失败（installer 返回非零退出码）"
+      log_info "可手动运行：${installer}"
+      return 1
+    fi
+  else
+    log_fail "无可用 cmd.exe 运行 Python 安装程序"
+    return 1
+  fi
+
+  sleep 2
+
+  # 当前 shell 的 PATH 不会被安装程序更新，直接探测目标路径定位新装的 python.exe
+  local py_dir_tag
+  py_dir_tag="Python$(echo "$PY_INSTALL_VER" | cut -d. -f1-2 | tr -d .)"
+  local localappdata="${LOCALAPPDATA:-${USERPROFILE:-$HOME}/AppData/Local}"
+  localappdata="${localappdata//\\//}"
+  local candidates=(
+    "${localappdata}/Programs/Python/${py_dir_tag}/python.exe"
+    "${USERPROFILE//\\//}/AppData/Local/Programs/Python/${py_dir_tag}/python.exe"
+    "C:/Program Files/${py_dir_tag}/python.exe"
+    "/c/Program Files/${py_dir_tag}/python.exe"
+  )
+  local cand ver
+  for cand in "${candidates[@]}"; do
+    if [ -f "$cand" ]; then
+      ver=$(_py_version_of "$cand")
+      if _py_meets_min "$ver"; then
+        INSTALLED_PY_EXE="$cand"
+        return 0
+      fi
+    fi
+  done
+  # py launcher 兜底（新装 Python 通常会注册到 py launcher）
+  if command -v py >/dev/null 2>&1; then
+    local py_exe
+    py_exe=$(py -3.12 -c "import sys; print(sys.executable)" 2>/dev/null | tr -d '\r')
+    if [ -n "$py_exe" ] && [ -f "$py_exe" ]; then
+      ver=$(_py_version_of "$py_exe")
+      if _py_meets_min "$ver"; then
+        INSTALLED_PY_EXE="$py_exe"
+        return 0
+      fi
+    fi
+  fi
+  log_fail "Python 安装似乎完成但找不到 python.exe — 请重启终端后重新运行 precheck.sh"
+  return 1
+}
+
+PY_CMD=""
+PY_VER=""
+_py_located="$(_locate_python || true)"
+if [ -n "$_py_located" ]; then
+  PY_CMD="${_py_located%%|*}"
+  PY_VER="${_py_located#*|}"
+  log_ok "Python ${PY_VER} (${PY_CMD})"
+else
+  # 收集当前 PATH 上的 python 版本仅用于错误提示
+  _fallback_cmd=""
+  for cmd in python python3; do
+    command -v "$cmd" >/dev/null 2>&1 && { _fallback_cmd="$cmd"; break; }
+  done
+  if [ -n "$_fallback_cmd" ]; then
+    _fallback_ver=$(_py_version_of "$_fallback_cmd")
+    log_warn "Python ${_fallback_ver} — 低于最低要求 ${PY_MIN_MAJOR}.${PY_MIN_MINOR}，尝试自动安装 Python ${PY_INSTALL_VER}..."
+  else
+    log_warn "Python — 未找到，尝试自动安装 Python ${PY_INSTALL_VER}..."
+  fi
+  if _install_python_silent; then
+    PY_CMD="$INSTALLED_PY_EXE"
+    PY_VER=$(_py_version_of "$PY_CMD")
+    log_warn "Python ${PY_VER} — 已自动安装并就绪：${PY_CMD}"
+    log_info "提示：新装的 Python 已写入用户 PATH，但需开启新终端才能在 PATH 上看到"
+  else
+    log_fail "Python ${PY_MIN_MAJOR}.${PY_MIN_MINOR}+ — 自动安装失败，请从 https://www.python.org/downloads/ 手动下载（选官方版而非 Microsoft Store 版）"
   fi
 fi
 
@@ -641,19 +808,43 @@ else
 fi
 
 # ── 3. .venv ──────────────────────────────────────────────────────────────────
-if [ ! -d "$PROJECT_ROOT/.venv" ]; then
-  if [ -n "$PY_CMD" ]; then
-    log_dl ".venv 不存在 — 正在创建..."
+# .venv 内嵌的 python.exe 必须 ≥ 最低版本，否则用现在已定位/已安装的 PY_CMD 重建。
+# 重建会丢失虚拟环境内的包安装；下一步「Python 依赖」会自动 pip install 回来。
+_venv_python_path() {
+  if [ -f "$PROJECT_ROOT/.venv/Scripts/python.exe" ]; then
+    echo "$PROJECT_ROOT/.venv/Scripts/python.exe"
+  elif [ -f "$PROJECT_ROOT/.venv/bin/python" ]; then
+    echo "$PROJECT_ROOT/.venv/bin/python"
+  fi
+}
+
+if [ -d "$PROJECT_ROOT/.venv" ]; then
+  _venv_py="$(_venv_python_path)"
+  _venv_ver=""
+  [ -n "$_venv_py" ] && _venv_ver=$(_py_version_of "$_venv_py")
+  if _py_meets_min "$_venv_ver"; then
+    log_ok ".venv 存在（Python ${_venv_ver}）"
+  elif [ -n "$PY_CMD" ]; then
+    log_warn ".venv 内 Python ${_venv_ver:-未知} 低于最低要求 ${PY_MIN_MAJOR}.${PY_MIN_MINOR} — 用 Python ${PY_VER} 重建..."
+    rm -rf "$PROJECT_ROOT/.venv"
     if "$PY_CMD" -m venv "$PROJECT_ROOT/.venv" 2>&1; then
-      log_warn ".venv — 已创建"
+      log_warn ".venv — 已重建（下一步会自动重装依赖）"
+      _venv_activated=0
     else
-      log_fail ".venv — 创建失败，请手动运行: python -m venv .venv"
+      log_fail ".venv — 重建失败，请手动运行: \"${PY_CMD}\" -m venv .venv"
     fi
   else
-    log_fail ".venv — 无法创建（Python 未找到）"
+    log_fail ".venv 内 Python ${_venv_ver:-未知} 低于最低要求 ${PY_MIN_MAJOR}.${PY_MIN_MINOR}，但找不到可用 Python 来重建"
+  fi
+elif [ -n "$PY_CMD" ]; then
+  log_dl ".venv 不存在 — 正在创建（Python ${PY_VER}）..."
+  if "$PY_CMD" -m venv "$PROJECT_ROOT/.venv" 2>&1; then
+    log_warn ".venv — 已创建"
+  else
+    log_fail ".venv — 创建失败，请手动运行: \"${PY_CMD}\" -m venv .venv"
   fi
 else
-  log_ok ".venv 存在"
+  log_fail ".venv — 无法创建（Python 未找到）"
 fi
 
 # ── 4. Python 依赖 ────────────────────────────────────────────────────────────
