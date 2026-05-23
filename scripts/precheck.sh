@@ -267,6 +267,16 @@ echo -e "${C_BOLD}${PREFIX} ============================================${C_RESE
 echo -e "${C_BOLD}${PREFIX}  环境预检 — video-material-insert-system${C_RESET}"
 echo -e "${C_BOLD}${PREFIX} ============================================${C_RESET}"
 
+# ── 0. 非交互式 shell 警告 ────────────────────────────────────────────────────
+# start_all.bat 用 `start "title" cmd /k` 派生独立窗口；当 precheck/start_all 跑在
+# 非交互式 shell（CI / SSH / Claude Code headless 等）时，这些派生窗口往往无法存活，
+# 子进程会随父 cmd 退出而被回收 —— 表现为"脚本成功返回但 :8000/:5173 没起来"。
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  log_warn "非交互式 shell 检测 — start_all.bat 的 \`start cmd /k\` 派生窗口在此环境可能不持久"
+  log_info "如需后台启动，请改用 scripts/start_backend.bat 与 scripts/start_frontend.bat 直接逐个启动"
+  log_info "或在 Windows 桌面 interactive session 中双击 scripts/start_all.bat"
+fi
+
 # ── 1. Python ─────────────────────────────────────────────────────────────────
 PY_CMD=""
 for cmd in python python3; do
@@ -709,6 +719,48 @@ else
   log_warn ".venv 无法激活，跳过依赖检查"
 fi
 
+# ── 4.5 Frontend 依赖 ────────────────────────────────────────────────────────
+# 检查 frontend/node_modules 是否存在且完整。stale node_modules（缺少 vue-i18n / jszip
+# 等 TTS-era 新增依赖）会让 Vite dev server 在 import 时崩。提前在 precheck 里跑一次
+# npm install，避免 start_frontend.bat 派生窗口启动后才发现需要安装（在 headless
+# 环境里那个派生窗口本就活不下来，错误也看不到）。
+ensure_frontend_deps() {
+  local fdir="$PROJECT_ROOT/frontend"
+  if [ ! -d "$fdir" ]; then
+    log_warn "frontend/ 目录不存在 — 跳过前端依赖检查"
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    log_warn "npm 未找到 — 跳过前端依赖检查"
+    return 0
+  fi
+
+  local need_install=0
+  if [ ! -d "$fdir/node_modules" ]; then
+    need_install=1
+  else
+    # 与 start_frontend.bat / start_all.sh 保持同一份 sentinel 清单
+    for pkg in vue vue-router pinia element-plus axios vue-i18n jszip; do
+      [ -f "$fdir/node_modules/$pkg/package.json" ] || { need_install=1; break; }
+    done
+  fi
+
+  if [ "$need_install" -eq 0 ]; then
+    log_ok "Frontend 依赖已安装"
+    return 0
+  fi
+
+  log_dl "Frontend 依赖缺失或不完整 — 正在 npm install（首次约 3–5 分钟）..."
+  if ( cd "$fdir" && npm install 2>&1 ); then
+    log_warn "Frontend 依赖 — 已安装"
+  else
+    log_fail "Frontend 依赖 — npm install 失败"
+    log_info "提示（中国大陆）：npm config set registry https://registry.npmmirror.com 后重试"
+    log_info "或手动: cd frontend && npm install"
+  fi
+}
+ensure_frontend_deps
+
 # ── 5. FFmpeg / FFprobe ───────────────────────────────────────────────────────
 # 缺失自动下载：固定使用 GyanD 的 ffmpeg-8.1-essentials_build（与 backend/.env 默认路径一致）
 ensure_ffmpeg() {
@@ -999,6 +1051,41 @@ fi
 check_db_lock
 
 # ── 8. 端口 8000 + 5173 ───────────────────────────────────────────────────────
+# uvicorn --reload 用 multiprocessing.spawn 派生 reload-worker 子进程，子进程
+# 会继承监听 socket。如果父进程被外部（任务管理器 / Stop-Process / 终端关闭等）
+# 杀掉但子进程还活着，Windows 的 netstat -ano 会继续报告**原父 PID** 持有端口，
+# 而 taskkill /F /PID <父> 此时是 no-op（PID 已不在 tasklist）。
+# 表现：free_port 看似成功，但端口实际仍被孤儿子进程占用，下次 bind 失败。
+# 解决：在 free_port 之前，先扫一遍 parent_pid 已死的孤儿 multiprocessing.spawn
+# 子进程并 kill。
+kill_orphan_uvicorn_children() {
+  if ! command -v powershell >/dev/null 2>&1; then
+    return 0
+  fi
+  local killed
+  killed=$(powershell -NonInteractive -Command "
+    \$ErrorActionPreference='SilentlyContinue'
+    \$out = @()
+    Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | ForEach-Object {
+      \$cmd = \$_.CommandLine
+      if (\$cmd -and \$cmd -match 'multiprocessing\.spawn' -and \$cmd -match 'parent_pid=(\d+)') {
+        \$parent_pid = [int]\$matches[1]
+        \$parent_alive = Get-Process -Id \$parent_pid -ErrorAction SilentlyContinue
+        if (-not \$parent_alive) {
+          Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue
+          \$out += \$_.ProcessId
+        }
+      }
+    }
+    Write-Output (\$out -join ',')
+  " 2>/dev/null | tr -d '\r')
+  if [ -n "$killed" ]; then
+    log_warn "已清理孤立的 uvicorn --reload 子进程（parent 已死，子进程仍持有 socket）: PID=${killed}"
+    sleep 1
+  fi
+}
+kill_orphan_uvicorn_children
+
 # 先尝试常规释放
 free_port 8000
 free_port 5173

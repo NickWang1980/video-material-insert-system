@@ -31,7 +31,7 @@ if "%MODE%"=="prod" (
   )
   npm run build
   cd ..
-  echo Starting backend (production static hosting)...
+  echo Starting backend ^(production static hosting^)...
   call scripts\start_backend.bat --prod
   exit /b 0
 )
