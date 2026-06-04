@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Settings
+from ..utils.corner_mask_utils import get_corner_assets
 from ..utils.encoder_utils import build_video_encode_args
 from ..utils.logger import get_logger
+from ..utils.phone_frame_utils import detect_screen_rect
 from .material_service import MatchEvent
 
 
@@ -303,6 +305,182 @@ def build_ffmpeg_command(
     base_label = "v0"
     filters.append(f"[0:v]setpts=PTS-STARTPTS[{base_label}]")
 
+    # ── 圆角画中画：探测素材尺寸 + 预生成圆角遮罩/描边 PNG，并注册为额外输入 ──
+    # 遮罩按精确缩放尺寸生成（与下面的 scale=ow:oh 完全一致），否则 alphamerge 会因
+    # 尺寸不符报错。普通画中画完全不进这段逻辑。
+    mask_to_index: dict[str, int] = {}
+    event_corner_info: dict[int, dict[str, object]] = {}
+    _native_size_cache: dict[str, tuple[int, int]] = {}
+
+    def _native_size(path: str) -> tuple[int, int]:
+        if path not in _native_size_cache:
+            try:
+                mp = probe_video(settings, path)
+                _native_size_cache[path] = (max(1, mp.width), max(1, mp.height))
+            except Exception:
+                # 探测失败时退化到画布尺寸，至少保证 scale 不报错。
+                _native_size_cache[path] = (canvas_w, canvas_h)
+        return _native_size_cache[path]
+
+    def _scaled_dims(event: MatchEvent) -> tuple[int, int]:
+        assert event.material_path is not None
+        max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
+        max_h = max(1, canvas_h)
+        nw, nh = _native_size(event.material_path)
+        s = min(max_w / nw, max_h / nh)
+        return max(1, int(round(nw * s))), max(1, int(round(nh * s)))
+
+    def _is_rounded(event: MatchEvent) -> bool:
+        if getattr(event, "corner_style", "普通") != "圆角":
+            return False
+        radius = max(0, int(getattr(event, "corner_radius_px", 0) or 0))
+        border_w = max(0, int(getattr(event, "border_width_px", 0) or 0))
+        return radius > 0 or border_w > 0
+
+    for event in success_events:
+        if not _is_rounded(event):
+            continue
+        radius = max(0, int(getattr(event, "corner_radius_px", 0) or 0))
+        border_w = max(0, int(getattr(event, "border_width_px", 0) or 0))
+        ow, oh = _scaled_dims(event)
+        mask_png, border_png = get_corner_assets(
+            settings, ow, oh, radius, border_w, getattr(event, "border_color", "#FFFFFF")
+        )
+        event_corner_info[id(event)] = {
+            "ow": ow,
+            "oh": oh,
+            "mask": mask_png,
+            "border": border_png,
+        }
+
+    # ── 手机边框画中画：解析上传的边框 PNG、识别屏幕透明区、算出框与屏幕的缩放尺寸 ──
+    event_phone_info: dict[int, dict[str, object]] = {}
+
+    def _phone_frame_path(event: MatchEvent) -> str | None:
+        if getattr(event, "corner_style", "普通") != "手机边框":
+            return None
+        name = (getattr(event, "phone_frame_file", "") or "").strip()
+        if not name:
+            return None
+        path = settings.data_dir / "uploads" / "phone_frames" / Path(name).name
+        return str(path) if path.exists() else None
+
+    for event in success_events:
+        frame_path = _phone_frame_path(event)
+        if not frame_path:
+            continue
+        try:
+            rect = detect_screen_rect(frame_path)
+        except Exception:
+            logger.warning("[phone_frame] 识别失败，回退普通画中画 file={}", frame_path)
+            continue
+        fw = max(1, int(rect.get("frame_w") or 1))
+        fh = max(1, int(rect.get("frame_h") or 1))
+        sx, sy, sw_screen, sh_screen = (rect.get("screen") or [0, 0, fw, fh])
+        # 实际叠加用的边框图：alpha→原图；纯色/兜底→已抠透明的 cut 图。
+        overlay_name = str(rect.get("overlay_file") or Path(frame_path).name)
+        overlay_path = Path(frame_path).with_name(overlay_name)
+        if not overlay_path.exists():
+            overlay_path = Path(frame_path)  # cut 图丢失则退回原图
+        # 按「手机本体(content_bbox=去背景后剩余的不透明边框) contain 适配画布 × 百分比」缩放：
+        # 百分比相对源视频整屏，100% = 手机本体铺满视频（占满绑定边），75% = 占 3/4。
+        # 不再用整张原图尺寸，故不受原图透明边距影响。
+        content = rect.get("content_bbox") or [0, 0, fw, fh]
+        bw = max(1, int(content[2]))
+        bh = max(1, int(content[3]))
+        ratio = max(1.0, float(event.size_ratio_percent)) / 100.0
+        s = min(canvas_w / bw, canvas_h / bh) * ratio
+        ow = max(1, int(round(fw * s)))
+        oh = max(1, int(round(fh * s)))
+        # 屏幕矩形按同比例缩放并夹取到框内。
+        rx = max(0, min(int(round(sx * ow / fw)), ow - 1))
+        ry = max(0, min(int(round(sy * oh / fh)), oh - 1))
+        rw = max(1, min(int(round(sw_screen * ow / fw)), ow - rx))
+        rh = max(1, min(int(round(sh_screen * oh / fh)), oh - ry))
+        # 图片素材若按屏幕宽度铺满后比屏幕高 → 自动竖向滚动（长截图效果）；视频不滚动。
+        scroll = False
+        img_h = rh
+        if _is_image(event):
+            nw, nh = _native_size(event.material_path)
+            img_h = max(rh, int(round(rw * nh / nw)))
+            scroll = img_h > rh + 1
+        event_phone_info[id(event)] = {
+            "ow": ow, "oh": oh, "rx": rx, "ry": ry, "rw": rw, "rh": rh,
+            "scroll": scroll, "img_h": img_h, "frame": str(overlay_path),
+        }
+
+    # 遮罩/描边/边框 PNG 的输入索引必须排在 materials + 音效之后，避免打乱既有引用。
+    next_input_idx = 1 + len(material_to_index) + len(sound_effect_to_index)
+    for info in event_corner_info.values():
+        for key in ("mask", "border"):
+            png = info[key]
+            if png and png not in mask_to_index:
+                mask_to_index[png] = next_input_idx
+                cmd += ["-loop", "1", "-i", str(png)]
+                next_input_idx += 1
+    for info in event_phone_info.values():
+        png = info["frame"]
+        if png and png not in mask_to_index:
+            mask_to_index[png] = next_input_idx
+            cmd += ["-loop", "1", "-i", str(png)]
+            next_input_idx += 1
+
+    def _scale_fragment(event: MatchEvent) -> str:
+        pinfo = event_phone_info.get(id(event))
+        if pinfo:
+            rw, rh, ow, oh, rx, ry = (
+                pinfo["rw"], pinfo["rh"], pinfo["ow"], pinfo["oh"], pinfo["rx"], pinfo["ry"]
+            )
+            if pinfo.get("scroll"):
+                # 长图：按屏幕宽铺满后竖向自动滚动（crop 的 y 用时间表达式，0→底部）。
+                ih = pinfo["img_h"]
+                dur = max(0.01, event.end_time - event.start_time)
+                y_expr = f"(({ih}-{rh})*min(t/{dur:.3f}\\,1))"
+                return (
+                    f"scale={rw}:{ih},"
+                    f"crop={rw}:{rh}:0:{y_expr},"
+                    f"pad={ow}:{oh}:{rx}:{ry}:color=black@0"
+                )
+            # 手机边框：素材 cover 裁切到屏幕尺寸，再 pad 到屏幕位置（透明底）。
+            return (
+                f"scale={rw}:{rh}:force_original_aspect_ratio=increase,"
+                f"crop={rw}:{rh},"
+                f"pad={ow}:{oh}:{rx}:{ry}:color=black@0"
+            )
+        info = event_corner_info.get(id(event))
+        if info:
+            # 圆角：精确缩放到遮罩尺寸，保证 alphamerge 尺寸一致。
+            return f"scale={info['ow']}:{info['oh']}"
+        max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
+        max_h = max(1, canvas_h)
+        return f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease"
+
+    def _emit_corner(in_label: str, event: MatchEvent, tag: str) -> str:
+        """追加圆角(alphamerge+描边) 或 手机边框(overlay 边框) 子链，返回新 label；普通原样返回。"""
+        pinfo = event_phone_info.get(id(event))
+        if pinfo:
+            # 把边框 PNG 缩到整框尺寸后叠在已 pad 好的素材上层。
+            frame_idx = mask_to_index[pinfo["frame"]]
+            frm = f"pff_{tag}"
+            filters.append(f"[{frame_idx}:v]scale={pinfo['ow']}:{pinfo['oh']}[{frm}]")
+            out_label = f"pf_{tag}"
+            filters.append(f"[{in_label}][{frm}]overlay=0:0:shortest=1[{out_label}]")
+            return out_label
+        info = event_corner_info.get(id(event))
+        if not info:
+            return in_label
+        mask_idx = mask_to_index[info["mask"]]
+        out_label = f"mr_{tag}"
+        filters.append(f"[{in_label}][{mask_idx}:v]alphamerge=shortest=1[{out_label}]")
+        if info["border"]:
+            border_idx = mask_to_index[info["border"]]
+            border_label = f"mb_{tag}"
+            filters.append(
+                f"[{out_label}][{border_idx}:v]overlay=0:0:shortest=1[{border_label}]"
+            )
+            out_label = border_label
+        return out_label
+
     overlay_labels: list[tuple[MatchEvent, str]] = []
     for material_path, occs in occurrences.items():
         input_idx = material_to_index[material_path]
@@ -310,26 +488,26 @@ def build_ffmpeg_command(
             src = f"[{input_idx}:v]"
             branch = f"m{input_idx}_0"
             event = occs[0]
-            max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
-            max_h = max(1, canvas_h)
+            scale_frag = _scale_fragment(event)
             if _is_video(event):
                 clip_duration = _clip_duration(event)
                 clip_start = max(0.0, event.video_start_seconds)
                 filters.append(
                     f"{src}trim=start={clip_start}:duration={clip_duration},setpts=PTS-STARTPTS,"
-                    f"format=rgba,scale={max_w}:{max_h}:force_original_aspect_ratio=decrease[{branch}]"
+                    f"format=rgba,{scale_frag}[{branch}]"
                 )
             else:
                 filters.append(
                     f"{src}setpts=PTS-STARTPTS,format=rgba,"
-                    f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease[{branch}]"
+                    f"{scale_frag}[{branch}]"
                 )
 
+            rounded = _emit_corner(branch, event, f"{input_idx}_0")
             ov = f"ov_{input_idx}_0"
             overlay_duration = max(0.01, event.end_time - event.start_time)
             opacity = max(0, min(100, event.opacity)) / 100.0
             filters.append(
-                f"[{branch}]trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
+                f"[{rounded}]trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
                 f"colorchannelmixer=aa={opacity}[{ov}]"
             )
             overlay_labels.append((event, ov))
@@ -341,25 +519,24 @@ def build_ffmpeg_command(
             filters.append(f"[{base}]split={len(occs)}{split_outputs}")
             for i, event in enumerate(occs):
                 ov = f"ov_{input_idx}_{i}"
+                sc = f"sc_{input_idx}_{i}"
                 overlay_duration = max(0.01, event.end_time - event.start_time)
                 opacity = max(0, min(100, event.opacity)) / 100.0
-                max_w = max(1, min(canvas_w, int(round(canvas_w * event.size_ratio_percent / 100.0))))
-                max_h = max(1, canvas_h)
+                scale_frag = _scale_fragment(event)
                 if _is_video(event):
                     clip_duration = _clip_duration(event)
                     clip_start = max(0.0, event.video_start_seconds)
                     filters.append(
                         f"[{base}_{i}]trim=start={clip_start}:duration={clip_duration},setpts=PTS-STARTPTS,"
-                        f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
-                        f"trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
-                        f"colorchannelmixer=aa={opacity}[{ov}]"
+                        f"{scale_frag}[{sc}]"
                     )
                 else:
-                    filters.append(
-                        f"[{base}_{i}]scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
-                        f"trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
-                        f"colorchannelmixer=aa={opacity}[{ov}]"
-                    )
+                    filters.append(f"[{base}_{i}]{scale_frag}[{sc}]")
+                rounded = _emit_corner(sc, event, f"{input_idx}_{i}")
+                filters.append(
+                    f"[{rounded}]trim=duration={overlay_duration},setpts=PTS-STARTPTS+{event.start_time}/TB,"
+                    f"colorchannelmixer=aa={opacity}[{ov}]"
+                )
                 overlay_labels.append((event, ov))
 
     overlay_labels = _apply_collision_layer_order(overlay_labels)

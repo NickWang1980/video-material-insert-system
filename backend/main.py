@@ -20,6 +20,7 @@ from .app.api.tasks import router as tasks_router
 from .app.api.tts import router as tts_router
 from .app.api.copy_gen import router as copy_gen_router
 from .app.api.video_gen import router as video_gen_router
+from .app.api.phone_frames import router as phone_frames_router
 from .app.middleware.audit_middleware import AuditMiddleware
 from .app.middleware.auth_middleware import AuthMiddleware
 from .app.config import get_settings
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(tts_router)
     app.include_router(copy_gen_router)
     app.include_router(video_gen_router)
+    app.include_router(phone_frames_router)
 
     # Production static hosting: mount frontend/dist if present
     repo_root = Path(__file__).resolve().parents[1]

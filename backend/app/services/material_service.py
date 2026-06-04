@@ -44,6 +44,13 @@ class MatchEvent:
     video_start_seconds: float = 0.0
     video_duration_seconds: float | None = None
     layer_rank: int | None = None
+    # 画中画类型 corner_style "普通"|"圆角"|"手机边框"。
+    # 圆角时按 radius/border 渲染；手机边框时按 phone_frame_file 套外壳。
+    corner_style: str = "普通"
+    corner_radius_px: int = 0
+    border_color: str = "#FFFFFF"
+    border_width_px: int = 0
+    phone_frame_file: str = ""
 
 
 def _build_subtitle_layer_rank_map(
@@ -271,6 +278,21 @@ def build_match_events(
         if video_duration_seconds is not None and video_duration_seconds <= 0:
             video_duration_seconds = None
 
+        # 画中画类型参数（缺省 / 非法值兜底为「普通」，保证旧模板零回归）。
+        corner_style = str(item.get("圆角类型", "普通") or "普通").strip()
+        if corner_style not in ("普通", "圆角", "手机边框"):
+            corner_style = "普通"
+        phone_frame_file = str(item.get("手机边框文件", "") or "").strip()
+        try:
+            corner_radius_px = max(0, int(item.get("圆角半径(px)", 0) or 0))
+        except (TypeError, ValueError):
+            corner_radius_px = 0
+        try:
+            border_width_px = max(0, int(item.get("描边粗细(px)", 0) or 0))
+        except (TypeError, ValueError):
+            border_width_px = 0
+        border_color = str(item.get("描边颜色", "#FFFFFF") or "#FFFFFF").strip() or "#FFFFFF"
+
         material, lookup_error = _find_material_by_scope(
             db,
             file_name=material_file,
@@ -335,6 +357,11 @@ def build_match_events(
                     video_start_seconds=video_start_seconds,
                     video_duration_seconds=video_duration_seconds,
                     layer_rank=layer_rank,
+                    corner_style=corner_style,
+                    corner_radius_px=corner_radius_px,
+                    border_color=border_color,
+                    border_width_px=border_width_px,
+                    phone_frame_file=phone_frame_file,
                 )
             )
 
@@ -364,6 +391,11 @@ def build_match_events(
                     video_start_seconds=video_start_seconds,
                     video_duration_seconds=video_duration_seconds,
                     layer_rank=None,
+                    corner_style=corner_style,
+                    corner_radius_px=corner_radius_px,
+                    border_color=border_color,
+                    border_width_px=border_width_px,
+                    phone_frame_file=phone_frame_file,
                 )
             )
 

@@ -20,6 +20,8 @@ Video Material Insert System — a short-form video production platform. Core fl
 
 ### Backend
 
+**Requires Python 3.12+** (enforced by `scripts/precheck.sh`; qwen_tts / torch / faster-whisper / cryptography wheels are 3.12+ only — 3.11 falls back to source builds and fails).
+
 ```bash
 # Install dependencies
 pip install -r backend/requirements.txt
@@ -68,6 +70,8 @@ Copy `backend/.env.example` → `backend/.env`. Key vars: `HOST`, `PORT`, `DATA_
 
 API prefix is always `/api`. Frontend in `frontend/src/api/` are thin Axios wrappers matching this prefix.
 
+Frontend stack: **Vue 3 + Vite + Pinia + Vue Router + Element Plus + TailwindCSS + vue-i18n**. There is **no ESLint / Prettier / Vitest / TypeScript** config — the only npm scripts are `dev`, `build`, `preview`. The `start_all` scripts detect a stale `node_modules` by probing for ~7 key packages (not lockfile integrity), so run `npm install` manually after changing frontend dependencies.
+
 ### Backend Layout
 
 ```
@@ -89,6 +93,16 @@ Key services:
 - `material_service.py` — keyword matching, collision detection/resolution
 - `rough_cut_service.py` — script splitting, per-role ASR, timeline building, preview generation
 - `tts_service.py` — Qwen3-TTS lazy loader (Base / CustomVoice), threading-safe model cache, idle-unload watchdog, tqdm-hooked progress reporting; routes synthesis to `generate_voice_clone` or `generate_custom_voice` based on payload
+
+### Auth, RBAC & Audit
+
+The app is gated by a JWT auth layer wired as FastAPI middleware in `backend/main.py` (order: `AuthMiddleware` → `AuditMiddleware` → CORS). `AuthMiddleware` validates the bearer token (`auth_service.py`, PyJWT + bcrypt) on protected routes; `AuditMiddleware` records mutating requests to the `AuditLog` table. Domain split:
+
+- `auth.py` — login, `/me`, token issuance
+- `users.py` — admin-only user CRUD; `roles.py` — `RoleDefinition` catalog (also feeds rough-cut role traits)
+- `audit.py` — audit-log read/purge
+
+Frontend mirrors this: `store/modules/auth.js` holds login state + `isAdmin`; the `router/index.js` `beforeEach` guard redirects unauthenticated users to `/login` and blocks admin routes (`/admin/users`) when `!auth.isAdmin`. Sidebar entries filter on `moduleKey` permissions. `jwt_secret` defaults to a dev value — override in prod.
 
 ### Database
 
@@ -139,6 +153,8 @@ data/
 
 **Change database schema**: Edit SQLAlchemy model → add `ALTER TABLE` migration to `_ensure_schema_compatibility()` in `database.py`
 
+**Add / change UI text**: locale JSON lives in `frontend/src/locale/{zh-CN,en-US}/`. Always add the key to **both** locales with matching structure — vue-i18n keys must stay in sync or the other locale falls back / shows the raw key.
+
 **Change material matching logic**: `backend/app/services/material_service.py` for matching; `backend/app/services/task_service.py` for collision handling during task execution
 
 **Change TTS behavior**: backend in `backend/app/services/tts_service.py` (lazy load, synth routing) and `backend/app/api/tts.py` (REST). Frontend page at `frontend/src/views/TTSStudio.vue` with sub-components in `frontend/src/components/tts/`; API wrapper `frontend/src/api/tts.js`; Pinia store `frontend/src/store/modules/tts.js` (status polling, enums cache, history). Locale strings in `frontend/src/locale/{zh-CN,en-US}/tts.json` — keep keys in sync between the two files.
@@ -147,4 +163,4 @@ data/
 
 **Change Video Gen behavior**: 后端 `backend/app/services/video_gen_service.py`（httpx 客户端单例 / source 解析 / submit_and_poll 后台线程 / save_to_material_library）+ `backend/app/api/video_gen.py`（multipart create + list/detail/cancel/download/save-to-material/health）+ `backend/app/models/video_gen.py` model（VideoGenTask）+ `backend/app/schemas/video_gen.py` Pydantic + `backend/app/config.py` 的 4 个字段（heygem_base_url / heygem_enabled / heygem_request_timeout / video_gen_vram_strategy）+ `backend/.env.example` 同步。前端页面 `frontend/src/views/VideoGen.vue` + 4 个子组件 `frontend/src/components/videoGen/{AudioSourcePicker,VideoSourcePicker,VideoGenStatusBar,SaveVideoToMaterialDialog}.vue`；API wrapper `frontend/src/api/videoGen.js`；Pinia store `frontend/src/store/modules/videoGen.js`（localStorage key `vmis_video_gen_vram_strategy`）。Settings 页「视频生成 / heygem 数字人 sidecar」section 集中显示连接状态 + VRAM 策略下拉。heygem 端的改动直接在 `vendor/heygem/` 子目录里改 + 在主仓一次 commit 即可（已不是 submodule，无需双推），常见入口 `vendor/heygem/api_server.py`（REST 薄壳） + `vendor/heygem/start_api.bat`（启动器；只查找 `./py39/python.exe` 或 `HEYGEM_PY39_DIR`）。`vendor/heygem/.gitignore` 仍作为 nested gitignore 生效，覆盖 `py39/`、`tmp/`、`result/`、`audio/`、各模型权重目录与 `*.pth/*.pt/*.onnx/...` 后缀。日志类别复用 `video_gen_*.log`（`_VIDEO_GEN_KEYS` 已包含 `video_gen_service` 与 `app.api.video_gen`）。
 
-**Change Copy Gen behavior**: 后端服务分散在 `backend/app/services/copy_gen/`（`templates.py` 文案模板 / `voice_config.py` Qwen3-TTS 解析 / `llm_client.py` OpenAI SDK 包装 / `model_config_service.py` Fernet 加解密 + 测连通 / `agent_service.py` Agent + Rule + Knowledge CRUD + `build_system_prompt` / `generator_service.py` 顺序多版本生成入口）；REST 在 `backend/app/api/copy_gen.py`；模型在 `backend/app/models/copy_gen.py`；Pydantic 在 `backend/app/schemas/copy_gen.py`。前端页面 `frontend/src/views/CopyGen.vue` + 9 个子组件 `frontend/src/components/copyGen/{QuickGenerator,AgentManager,AgentDetail,RuleEditor,KnowledgeEditor,ModelConfigManager,ResultCard,SendToTTSDialog,HistoryList}.vue`；API wrapper `frontend/src/api/copyGen.js`；Pinia store `frontend/src/store/modules/copyGen.js`（localStorage key `vmis_copygen_history`，≤50 条 quota-trim）；locale `frontend/src/locale/{zh-CN,en-US}/copyGen.json`（同 372 leaf key 结构对齐）。Fernet 加密 key 解析优先级：`settings.copy_gen_llm_key` 环境变量 → `data/.copy_gen_key` 文件 → 自动生成并写入。Phase-1 不含文档解析 / 从范例学习 / 整合优化 / 多用户 Agent 隔离 — 见 `docs/20260515_copy_gen_phase1_*.md`。
+**Change Copy Gen behavior**: 后端服务分散在 `backend/app/services/copy_gen/`（`templates.py` 文案模板 / `voice_config.py` Qwen3-TTS 解析 / `llm_client.py` LLM 客户端包装（默认 OpenAI-compatible SDK，亦内置 `anthropic` SDK，按 ModelConfig 的 base_url 自动路由）/ `model_config_service.py` Fernet 加解密 + 测连通 / `agent_service.py` Agent + Rule + Knowledge CRUD + `build_system_prompt` / `generator_service.py` 顺序多版本生成入口）；REST 在 `backend/app/api/copy_gen.py`；模型在 `backend/app/models/copy_gen.py`；Pydantic 在 `backend/app/schemas/copy_gen.py`。前端页面 `frontend/src/views/CopyGen.vue` + 9 个子组件 `frontend/src/components/copyGen/{QuickGenerator,AgentManager,AgentDetail,RuleEditor,KnowledgeEditor,ModelConfigManager,ResultCard,SendToTTSDialog,HistoryList}.vue`；API wrapper `frontend/src/api/copyGen.js`；Pinia store `frontend/src/store/modules/copyGen.js`（localStorage key `vmis_copygen_history`，≤50 条 quota-trim）；locale `frontend/src/locale/{zh-CN,en-US}/copyGen.json`（同 372 leaf key 结构对齐）。Fernet 加密 key 解析优先级：`settings.copy_gen_llm_key` 环境变量 → `data/.copy_gen_key` 文件 → 自动生成并写入。Phase-1 不含文档解析 / 从范例学习 / 整合优化 / 多用户 Agent 隔离 — 见 `docs/20260515_copy_gen_phase1_*.md`。

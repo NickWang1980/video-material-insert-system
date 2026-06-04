@@ -33,6 +33,10 @@ def ensure_data_layout(settings: Settings) -> None:
     (data_dir / "video_gen").mkdir(parents=True, exist_ok=True)
     (data_dir / "uploads" / "video_gen" / "audio").mkdir(parents=True, exist_ok=True)
     (data_dir / "uploads" / "video_gen" / "video").mkdir(parents=True, exist_ok=True)
+    # 圆角画中画遮罩 / 描边框 PNG 缓存（按尺寸+参数命名复用）。
+    (data_dir / "cache" / "pip_masks").mkdir(parents=True, exist_ok=True)
+    # 手机边框画中画：用户上传的手机外壳 PNG。
+    (data_dir / "uploads" / "phone_frames").mkdir(parents=True, exist_ok=True)
 
 
 def migrate_legacy_if_needed(settings: Settings) -> None:

@@ -200,6 +200,60 @@
                 :max="100"
                 :step="1"
               />
+              <el-select v-model="row['圆角类型']" placeholder="画中画样式">
+                <el-option label="普通画中画" value="普通" />
+                <el-option label="圆角画中画" value="圆角" />
+                <el-option label="手机边框" value="手机边框" />
+              </el-select>
+              <div v-if="row['圆角类型'] === '圆角'" class="flex flex-col">
+                <span class="text-xs text-gray-400 leading-none mb-0.5">圆角半径(px)</span>
+                <el-input-number
+                  v-model="row['圆角半径(px)']"
+                  :min="0"
+                  :max="200"
+                  :step="1"
+                />
+              </div>
+              <div v-if="row['圆角类型'] === '圆角'" class="flex flex-col">
+                <span class="text-xs text-gray-400 leading-none mb-0.5">描边颜色</span>
+                <el-color-picker v-model="row['描边颜色']" color-format="hex" />
+              </div>
+              <div v-if="row['圆角类型'] === '圆角'" class="flex flex-col">
+                <span class="text-xs text-gray-400 leading-none mb-0.5">描边粗细(px)</span>
+                <el-input-number
+                  v-model="row['描边粗细(px)']"
+                  :min="0"
+                  :max="50"
+                  :step="1"
+                />
+              </div>
+              <div v-if="row['圆角类型'] === '手机边框'" class="col-span-2 flex flex-col">
+                <span class="text-xs text-gray-400 leading-none mb-0.5">
+                  手机边框（在「设置」页上传管理）
+                </span>
+                <div class="flex items-center gap-1">
+                  <el-select
+                    v-model="row['手机边框文件']"
+                    style="width: 130px"
+                    filterable
+                    clearable
+                    :placeholder="phoneFrames.length ? '选择边框' : '请先到设置页上传'"
+                  >
+                    <el-option
+                      v-for="frame in phoneFrames"
+                      :key="frame.name"
+                      :label="frame.name"
+                      :value="frame.name"
+                    />
+                  </el-select>
+                  <img
+                    v-if="phoneFrameUrlByName(row['手机边框文件'])"
+                    :src="phoneFrameUrlByName(row['手机边框文件'])"
+                    class="w-6 h-10 rounded object-contain bg-gray-50 border border-gray-200"
+                    alt="frame-preview"
+                  />
+                </div>
+              </div>
             </div>
           </template>
         </el-table-column>
@@ -211,16 +265,16 @@
         </el-table-column>
       </el-table>
     </div>
-  </div>
 
-  <el-dialog
-    v-model="positionDialogVisible"
-    title="选择九宫格位置（5×5参考）"
-    width="360px"
-    destroy-on-close
-  >
-    <GridSelector v-model="currentRowPosition" />
-  </el-dialog>
+    <el-dialog
+      v-model="positionDialogVisible"
+      title="选择九宫格位置（5×5参考）"
+      width="360px"
+      destroy-on-close
+    >
+      <GridSelector v-model="currentRowPosition" />
+    </el-dialog>
+  </div>
 </template>
 
 <script setup>
@@ -231,6 +285,7 @@ import { ElMessage } from "element-plus";
 import GridSelector from "../components/common/GridSelector.vue";
 import { useConfigStore } from "../store/modules/config";
 import { getMaterialTree, listMaterials, previewUrl } from "../api/material";
+import { listPhoneFrames, phoneFrameFileUrl } from "../api/phoneFrames";
 
 const props = defineProps({ id: { type: String, default: null } });
 const isEdit = computed(() => !!props.id);
@@ -255,6 +310,7 @@ const materialPools = ref({
 });
 const audioMaterials = ref([]);
 const materialTree = ref({ products: [] });
+const phoneFrames = ref([]);
 const hoverPreviewByRow = ref({});
 const positionDialogVisible = ref(false);
 const selectedPositionRowIndex = ref(-1);
@@ -429,6 +485,11 @@ function addRow() {
     "素材宽度占比(%)": 25,
     "视频起始秒(秒)": 0,
     "视频持续秒(秒)": null,
+    圆角类型: "普通",
+    "圆角半径(px)": 24,
+    描边颜色: "#FFFFFF",
+    "描边粗细(px)": 0,
+    手机边框文件: "",
   });
 }
 
@@ -453,6 +514,11 @@ function normalizeRow(row) {
     "素材宽度占比(%)": normalizeSizeRatio(materialType, row["素材宽度占比(%)"] ?? (materialType === "短视频" ? 70 : 25)),
     "视频起始秒(秒)": row["视频起始秒(秒)"] ?? 0,
     "视频持续秒(秒)": row["视频持续秒(秒)"] ?? null,
+    圆角类型: ["圆角", "手机边框"].includes(row["圆角类型"]) ? row["圆角类型"] : "普通",
+    "圆角半径(px)": row["圆角半径(px)"] ?? 24,
+    描边颜色: row["描边颜色"] ?? "#FFFFFF",
+    "描边粗细(px)": row["描边粗细(px)"] ?? 0,
+    手机边框文件: row["手机边框文件"] ?? "",
   };
 }
 
@@ -472,6 +538,19 @@ async function loadMaterialPools() {
   };
   audioMaterials.value = sortByFileName(audios);
   materialTree.value = tree;
+}
+
+async function loadPhoneFrames() {
+  try {
+    phoneFrames.value = await listPhoneFrames();
+  } catch {
+    phoneFrames.value = [];
+  }
+}
+
+function phoneFrameUrlByName(name) {
+  if (!name) return "";
+  return phoneFrameFileUrl(name);
 }
 
 function stopPreview() {
@@ -514,6 +593,7 @@ function previewCueSound(row) {
 
 onMounted(async () => {
   await loadMaterialPools();
+  await loadPhoneFrames();
   if (isEdit.value) {
     const template = await store.getTemplate(templateId.value);
     templateName.value = template.template_name;

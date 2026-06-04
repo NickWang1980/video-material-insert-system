@@ -23,6 +23,12 @@ class ConfigRule(BaseModel):
     素材宽度占比: float = 25.0
     视频起始秒_秒: float = 0.0
     视频持续秒_秒: float | None = None
+    # 画中画类型 "普通"|"圆角"|"手机边框"。圆角时半径/描边生效；手机边框时 手机边框文件 生效。
+    圆角类型: str = "普通"
+    圆角半径_px: int = 24
+    描边颜色: str = "#FFFFFF"
+    描边粗细_px: int = 0
+    手机边框文件: str = ""
 
     def to_legacy_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +48,11 @@ class ConfigRule(BaseModel):
             "素材宽度占比(%)": self.素材宽度占比,
             "视频起始秒(秒)": self.视频起始秒_秒,
             "视频持续秒(秒)": self.视频持续秒_秒,
+            "圆角类型": self.圆角类型,
+            "圆角半径(px)": self.圆角半径_px,
+            "描边颜色": self.描边颜色,
+            "描边粗细(px)": self.描边粗细_px,
+            "手机边框文件": self.手机边框文件,
         }
 
 

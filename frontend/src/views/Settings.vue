@@ -549,6 +549,72 @@
       </div>
     </div>
 
+    <!-- ── 手机边框管理（素材插入·圆角画中画用） ──────────────────────── -->
+    <div class="p-6 rounded-xl border border-gray-200 shadow-card">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-lg font-bold">手机边框管理（用于：素材插入 · 画中画套手机外壳）</div>
+          <div class="text-xs text-gray-500 mt-1">
+            上传一次、反复复用。上传带透明（或纯色）屏幕区的 PNG/WebP，系统会自动识别屏幕区；纯色屏幕会自动抠成透明。
+            模板编辑页选「手机边框」时从这里上传的列表中选择。
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <el-upload
+            :auto-upload="false"
+            :show-file-list="false"
+            accept=".png,.webp"
+            :on-change="onUploadPhoneFrame"
+          >
+            <el-button type="primary" size="small" :loading="phoneFrameUploading">上传手机边框</el-button>
+          </el-upload>
+          <el-button size="small" :loading="phoneFramesLoading" @click="loadPhoneFrames">刷新</el-button>
+        </div>
+      </div>
+      <el-table :data="phoneFrames" size="small" style="width: 100%">
+        <el-table-column label="预览" width="80">
+          <template #default="{ row }">
+            <img
+              :src="phoneFrameFileUrl(row.name)"
+              class="w-8 h-14 rounded object-contain bg-gray-50 border border-gray-200"
+              alt="frame"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="文件名" min-width="180" />
+        <el-table-column label="尺寸" width="110">
+          <template #default="{ row }">{{ row.frame_w }}×{{ row.frame_h }}</template>
+        </el-table-column>
+        <el-table-column label="屏幕区识别" min-width="200">
+          <template #default="{ row }">
+            <el-tag v-if="row.method === 'alpha'" type="success" size="small">透明屏幕</el-tag>
+            <el-tag v-else-if="row.method === 'color'" type="success" size="small">纯色已抠透明</el-tag>
+            <el-tag v-else type="warning" size="small">未识别(默认内缩)</el-tag>
+            <span v-if="row.screen" class="text-xs text-gray-400 ml-2">
+              {{ row.screen[0] }},{{ row.screen[1] }} · {{ row.screen[2] }}×{{ row.screen[3] }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-popconfirm
+              title="确认删除该手机边框？"
+              confirm-button-text="删除"
+              cancel-button-text="取消"
+              @confirm="onDeletePhoneFrame(row)"
+            >
+              <template #reference>
+                <el-button size="small" text type="danger">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <span class="text-gray-400 text-sm">暂无手机边框，点右上「上传手机边框」添加</span>
+        </template>
+      </el-table>
+    </div>
+
     <!-- ── 下载进度弹窗 ─────────────────────────────────────────────── -->
     <el-dialog
       v-model="installOpen"
@@ -589,6 +655,12 @@ import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as settingsApi from "../api/settings";
 import * as ttsApi from "../api/tts";
+import {
+  listPhoneFrames,
+  uploadPhoneFrame,
+  deletePhoneFrame,
+  phoneFrameFileUrl,
+} from "../api/phoneFrames";
 import { useVideoGenStore } from "../store/modules/videoGen";
 
 const videoGenStore = useVideoGenStore();
@@ -647,6 +719,10 @@ const ttsModels = ref([]);
 const ttsModelCacheRoot = ref("");
 const ttsModelsLoading = ref(false);
 const ttsUnloading = ref(false);
+
+const phoneFrames = ref([]);
+const phoneFramesLoading = ref(false);
+const phoneFrameUploading = ref(false);
 const ttsActing = reactive({});  // { base: 'download' | 'delete', custom: ... }
 
 onMounted(async () => {
@@ -658,9 +734,52 @@ onMounted(async () => {
     loadAsrQueue(),
     loadFfmpegQueue(),
     loadTTSModels(),
+    loadPhoneFrames(),
     videoGenStore.fetchHealth(),
   ]);
 });
+
+async function loadPhoneFrames() {
+  phoneFramesLoading.value = true;
+  try {
+    phoneFrames.value = await listPhoneFrames();
+  } catch {
+    phoneFrames.value = [];
+  } finally {
+    phoneFramesLoading.value = false;
+  }
+}
+
+async function onUploadPhoneFrame(file) {
+  const raw = file?.raw;
+  if (!raw) return;
+  phoneFrameUploading.value = true;
+  try {
+    const info = await uploadPhoneFrame(raw);
+    await loadPhoneFrames();
+    if (info?.method === "color") {
+      ElMessage.success("已上传，并自动识别纯色屏幕、抠成透明");
+    } else if (info?.method === "alpha") {
+      ElMessage.success("手机边框已上传（已含透明屏幕区）");
+    } else {
+      ElMessage.warning("已上传，但未能识别屏幕区，已用默认内缩抠透明；建议屏幕用纯色块或透明");
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || "上传失败");
+  } finally {
+    phoneFrameUploading.value = false;
+  }
+}
+
+async function onDeletePhoneFrame(row) {
+  try {
+    await deletePhoneFrame(row.name);
+    await loadPhoneFrames();
+    ElMessage.success("已删除");
+  } catch (error) {
+    ElMessage.error(error?.message || "删除失败");
+  }
+}
 
 async function loadTTSModels() {
   ttsModelsLoading.value = true;

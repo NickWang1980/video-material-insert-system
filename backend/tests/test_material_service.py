@@ -89,6 +89,42 @@ def test_build_match_events_video_size_ratio_and_video_params(tmp_path):
     assert events[0].video_duration_seconds == 4.0
 
 
+def test_build_match_events_rounded_corner_fields(tmp_path):
+    image_path = tmp_path / "hello.png"
+    image_path.write_bytes(b"png")
+    db = _DB(materials={"hello.png": _Material(file_name="hello.png", file_path=Path(image_path).as_posix())})
+    subtitles = [{"index": 1, "text": "家人们", "start_seconds": 1.0, "end_seconds": 2.0}]
+    config = [
+        {
+            "关键字": "家人们",
+            "素材文件名": "hello.png",
+            "素材类型": "图片",
+            "圆角类型": "圆角",
+            "圆角半径(px)": 30,
+            "描边颜色": "#FF0000",
+            "描边粗细(px)": 4,
+        }
+    ]
+    events = build_match_events(db, subtitles, config)
+    assert events[0].corner_style == "圆角"
+    assert events[0].corner_radius_px == 30
+    assert events[0].border_color == "#FF0000"
+    assert events[0].border_width_px == 4
+
+
+def test_build_match_events_corner_defaults_normal(tmp_path):
+    """旧配置（无圆角字段）应默认为普通画中画。"""
+    image_path = tmp_path / "hello.png"
+    image_path.write_bytes(b"png")
+    db = _DB(materials={"hello.png": _Material(file_name="hello.png", file_path=Path(image_path).as_posix())})
+    subtitles = [{"index": 1, "text": "家人们", "start_seconds": 1.0, "end_seconds": 2.0}]
+    config = [{"关键字": "家人们", "素材文件名": "hello.png", "素材类型": "图片"}]
+    events = build_match_events(db, subtitles, config)
+    assert events[0].corner_style == "普通"
+    assert events[0].corner_radius_px == 0
+    assert events[0].border_width_px == 0
+
+
 def test_build_match_events_collision_group_overlay_all(tmp_path):
     files = ["happy_home.png", "happy.png", "home.png"]
     materials = {}
