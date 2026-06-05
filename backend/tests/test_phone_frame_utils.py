@@ -85,6 +85,21 @@ def test_no_gray_fringe_after_bg_removal(tmp_path):
     assert int(halo.sum()) == 0
 
 
+def test_screen_hole_does_not_bulge_into_bezel(tmp_path):
+    """屏幕透明孔不得撑过黑边框内沿——否则素材会从边框下露出(轻微溢出手机范围)。
+
+    screen_inset=60，故屏幕左沿在 x≈60。x=57(边框内、距屏幕沿 3px) 必须仍是不透明黑边框；
+    旧逻辑把抠除区整体膨胀 2px，会把这里抠透 → 回归点。
+    """
+    p = tmp_path / "bulge.png"
+    _frame(p, bg=(246, 246, 246, 255), bezel_rgb=(3, 3, 3), screen=(255, 255, 255, 255))
+    r = detect_screen_rect(p, refresh=True)
+    sx = r["screen"][0]
+    cut = p.with_name(r["overlay_file"])
+    assert _alpha(cut, sx - 3, 220) >= 200      # 屏幕沿内侧的边框仍保留(孔没撑进边框)
+    assert _alpha(cut, sx + 5, 220) == 0        # 屏幕内仍透明
+
+
 def test_full_opaque_no_bezel_falls_back(tmp_path):
     """整图单色、无边框：去背景会抹掉一切 → 放弃去背景，屏幕走兜底。"""
     p = tmp_path / "flat.png"

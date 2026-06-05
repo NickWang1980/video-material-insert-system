@@ -36,6 +36,8 @@ _AREA_MAX_FRAC = 0.96
 _CUT_SUFFIX = ".cut.png"
 _MARK_BG = (1, 254, 2, 255)
 _MARK_SCREEN = (254, 1, 253, 255)
+# 抠图算法版本：升级算法后递增，旧 sidecar 失配即自动重算（让既有边框也吃到修复，无需重传）。
+_CACHE_VERSION = 2
 
 
 def _sidecar_path(p: Path) -> Path:
@@ -51,26 +53,21 @@ def _mask_eq(arr, mark) -> "any":
 
 
 # 去背景后收边/羽化参数。
-_EDGE_DILATE = 2   # 把抠除区向边框内膨胀几像素，吃掉残留的抗锯齿灰边。
+_EDGE_DILATE = 2   # 背景去除区向外膨胀几像素，吃掉边框外侧残留的抗锯齿灰边。
 _EDGE_FEATHER = 1.0  # 高斯羽化半径，做平滑抗锯齿边。
 
 
-def _feathered_alpha(orig_alpha, remove):
-    """对"要抠除区(remove=True)"做膨胀+高斯羽化，返回平滑抗锯齿后的新 alpha。
-
-    膨胀让边界落进纯黑边框内（吃掉灰毛边），羽化让边缘平滑；最终新 alpha = 原 alpha × (1-遮罩)。
-    """
+def _feather_remove(remove, dilate, feather):
+    """把布尔"抠除区"按 dilate(膨胀像素，0=不膨胀)+feather(高斯羽化)处理，返回 0~1 抠除强度图。"""
     from PIL import Image, ImageFilter
     import numpy as np
 
     m = Image.fromarray((remove.astype(np.uint8)) * 255, "L")
-    if _EDGE_DILATE > 0:
-        m = m.filter(ImageFilter.MaxFilter(2 * _EDGE_DILATE + 1))  # 膨胀抠除区
-    if _EDGE_FEATHER > 0:
-        m = m.filter(ImageFilter.GaussianBlur(_EDGE_FEATHER))      # 羽化
-    removef = np.asarray(m, dtype=np.float32) / 255.0
-    keep = 1.0 - removef
-    return np.clip(orig_alpha.astype(np.float32) * keep, 0, 255).astype(np.uint8)
+    if dilate > 0:
+        m = m.filter(ImageFilter.MaxFilter(2 * dilate + 1))   # 膨胀抠除区
+    if feather > 0:
+        m = m.filter(ImageFilter.GaussianBlur(feather))       # 羽化
+    return np.asarray(m, dtype=np.float32) / 255.0
 
 
 def _compute_screen_rect(png_path: Path) -> dict:
@@ -129,9 +126,9 @@ def _compute_screen_rect(png_path: Path) -> dict:
             logger.warning("[phone_frame] 去背景会抹掉手机本体，放弃去背景 frame={}", png_path.name)
     method = "fallback"
     detected = False
-    remove = np.zeros((fh, fw), dtype=bool)
+    screen_remove = np.zeros((fh, fw), dtype=bool)
     if screen_valid:
-        remove |= screen_mask
+        screen_remove |= screen_mask
         method = "color"
         detected = True
     else:
@@ -139,14 +136,17 @@ def _compute_screen_rect(png_path: Path) -> dict:
         iw, ih = int(round(fw * _FALLBACK_INSET)), int(round(fh * _FALLBACK_INSET))
         rect = [iw, ih, max(1, fw - 2 * iw), max(1, fh - 2 * ih)]
         x, y, w, h = rect
-        remove[y : y + h, x : x + w] = True
-    if bg_valid:
-        remove |= bg_mask
+        screen_remove[y : y + h, x : x + w] = True
 
-    # 抗毛边：硬切只删接近背景/屏幕色的像素，黑边框外会残留一圈抗锯齿浅灰（毛边）。
-    # 先膨胀 remove 吃掉这圈灰边（边界落进纯黑边框内），再高斯羽化成平滑抗锯齿，
-    # 用 0~1 遮罩乘原 alpha（羽化带落在纯黑边框上，半透明也是黑色，不会再有灰晕）。
-    arr[..., 3] = _feathered_alpha(arr[..., 3], remove)
+    # 抗毛边 / 防溢出：硬切只删接近背景/屏幕色的像素，边框边缘会残留一圈抗锯齿浅灰。
+    #  · 背景去除区向【外】膨胀(+_EDGE_DILATE)，吃掉边框外侧那圈灰毛边；
+    #  · 屏幕透明孔【不膨胀】——一旦把孔向外撑大，孔沿就会越过黑边框内沿，
+    #    素材便从边框下露出，造成"轻微溢出"手机范围（本次修复点）。
+    # 两者各自羽化为 0~1 抠除强度后相乘叠到原 alpha 上（羽化带落在黑边框上，无灰晕）。
+    keep = 1.0 - _feather_remove(screen_remove, 0, _EDGE_FEATHER)
+    if bg_valid:
+        keep = keep * (1.0 - _feather_remove(bg_mask, _EDGE_DILATE, _EDGE_FEATHER))
+    arr[..., 3] = np.clip(arr[..., 3].astype(np.float32) * keep, 0, 255).astype(np.uint8)
 
     from PIL import Image as _Image
 
@@ -172,7 +172,7 @@ def _compute_screen_rect(png_path: Path) -> dict:
     return {
         "frame_w": fw, "frame_h": fh, "screen": rect, "content_bbox": content_bbox,
         "detected": detected, "method": method, "overlay_file": cut.name,
-        "bg_removed": bg_valid,
+        "bg_removed": bg_valid, "cache_version": _CACHE_VERSION,
     }
 
 
@@ -191,6 +191,7 @@ def detect_screen_rect(png_path: str | Path, *, refresh: bool = False) -> dict:
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             ok = (
                 isinstance(data, dict)
+                and data.get("cache_version") == _CACHE_VERSION
                 and isinstance(data.get("screen"), list)
                 and len(data["screen"]) == 4
                 and "overlay_file" in data

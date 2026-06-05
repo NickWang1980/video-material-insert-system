@@ -66,7 +66,11 @@
       "Bash(git log *)",
       "Bash(Get-ChildItem -Path \"D:\\\\workspace\\\\bzybox\\\\v-project\\\\video-material-insert-system\\\\feature\\\\5.0\\\\backend\" -Directory)",
       "Bash(Select-Object Name)",
-      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/test_corner_mask_utils.py backend/tests/test_phone_frame_utils.py backend/tests/test_video_service.py backend/tests/test_material_service.py -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/test_corner_mask_utils.py backend/tests/test_phone_frame_utils.py backend/tests/test_video_service.py backend/tests/test_material_service.py -q)",
+      "Bash(python -m pytest backend/tests/test_phone_frame_utils.py -q)",
+      "Bash(Get-ChildItem -Path \"D:\\\\workspace\\\\bzybox\\\\v-project\\\\vStudio\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)"
     ]
   }
 }
